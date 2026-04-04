@@ -1,8 +1,8 @@
 import axios from 'axios';
 
-// Base instance
+// Base instance tied natively to the Vite Environment runtime
 const axiosClient = axios.create({
-  baseURL: 'http://localhost:8000/api/v1',
+  baseURL: import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1',
   timeout: 5000,
 });
 

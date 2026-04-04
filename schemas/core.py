@@ -53,6 +53,18 @@ class InventoryResponse(BaseModel):
     class Config:
         from_attributes = True
 
+class InventorySummaryResponse(BaseModel):
+    product_id: int
+    name: str
+    sku: str
+    category: str
+    base_price: float
+    quantity_on_hand: int
+    reorder_point: int
+    
+    class Config:
+        from_attributes = True
+
 # --- Prediction Schemas ---
 class PredictionResponse(BaseModel):
     product_id: int

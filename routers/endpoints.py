@@ -83,6 +83,30 @@ def log_sale(request: Request, sale: schemas.SalesCreate, shop_id: int, db: Sess
 
 
 # --- Inventory Fetch ---
+@router.get("/inventory/summary", response_model=List[schemas.InventorySummaryResponse])
+@limiter.limit("50/minute")
+def get_inventory_summary(request: Request, shop_id: int, limit: int = 100, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    # Highly optimized single DB join avoiding Promise.all API abuse
+    joined_data = db.query(models.Product, models.Inventory).join(
+        models.Inventory, models.Product.id == models.Inventory.product_id
+    ).filter(
+        models.Product.shop_id == shop_id,
+        models.Inventory.shop_id == shop_id
+    ).limit(limit).all()
+    
+    summary = []
+    for product, inventory in joined_data:
+        summary.append({
+            "product_id": product.id,
+            "name": product.name,
+            "sku": product.sku,
+            "category": product.category,
+            "base_price": product.base_price,
+            "quantity_on_hand": inventory.quantity_on_hand,
+            "reorder_point": inventory.reorder_point
+        })
+    return summary
+
 @router.get("/inventory/{product_id}", response_model=schemas.InventoryResponse)
 @limiter.limit("100/minute")
 def get_inventory(request: Request, shop_id: int, product_id: int, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
