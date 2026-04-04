@@ -4,7 +4,8 @@ from fastapi import FastAPI, Request
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
-from database import engine, Base
+from database import engine
+from models.core import Base
 from routers import endpoints
 from limiter import limiter
 
@@ -17,9 +18,21 @@ logger = logging.getLogger(__name__)
 
 Base.metadata.create_all(bind=engine)
 
+from fastapi.middleware.cors import CORSMiddleware
+import os
+
 app = FastAPI(
     title="Inventory & Demand Prediction API",
     version="1.0.0"
+)
+
+# Render Deployment CORS Handler
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"], # Expand this to exact frontend vercel/render URL in deep production
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # Attach Limiter to FastAPI state and register exception handler
