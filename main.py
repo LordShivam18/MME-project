@@ -1,14 +1,19 @@
 import logging
 import time
+import os
+
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
+
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
 from database import engine
-from models.core import Base
 from routers import endpoints
 from limiter import limiter
 
+# ---------------- LOGGING ----------------
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s - %(message)s",
@@ -16,44 +21,65 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-Base.metadata.create_all(bind=engine)
-
-from fastapi.middleware.cors import CORSMiddleware
-import os
-
+# ---------------- APP INIT ----------------
 app = FastAPI(
     title="Inventory & Demand Prediction API",
     version="1.0.0"
 )
 
-# Render Deployment CORS Handler
+# ---------------- CORS ----------------
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # Expand this to exact frontend vercel/render URL in deep production
+    allow_origins=["*"],  # change later to frontend URL
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Attach Limiter to FastAPI state and register exception handler
+# ---------------- RATE LIMITER ----------------
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+# ---------------- STARTUP CHECK ----------------
+@app.on_event("startup")
+def startup():
+    print("🚀 Starting app...")
+
+    # Debug env
+    print("DATABASE_URL:", os.getenv("DATABASE_URL"))
+    print("SECRET_KEY:", os.getenv("SECRET_KEY"))
+
+    # Safe DB check
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        print("✅ Database connected")
+    except Exception as e:
+        print("❌ Database connection failed:", e)
+
+# ---------------- REQUEST LOGGER ----------------
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
     start_time = time.time()
     try:
         response = await call_next(request)
         process_time = time.time() - start_time
-        logger.info(f"API Request: {request.method} {request.url.path} - Status: {response.status_code} - Loaded in: {process_time:.4f}s")
+        logger.info(
+            f"{request.method} {request.url.path} "
+            f"{response.status_code} {process_time:.4f}s"
+        )
         return response
     except Exception as exc:
         process_time = time.time() - start_time
-        logger.error(f"FATAL API CRASH: {request.method} {request.url.path} - Error: {str(exc)}")
+        logger.error(
+            f"CRASH: {request.method} {request.url.path} - {str(exc)}"
+        )
         raise
 
+# ---------------- ROUTES ----------------
 app.include_router(endpoints.router, prefix="/api/v1")
 
+# ---------------- HEALTH CHECK ----------------
 @app.get("/health")
 def health_check():
     return {"status": "ok"}
