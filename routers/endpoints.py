@@ -60,22 +60,24 @@ def validate_token(request: Request, current_user: dict = Depends(get_current_us
 @router.post("/products/", response_model=schemas.ProductResponse)
 @limiter.limit("100/minute")
 def create_product(request: Request, product: schemas.ProductCreate, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    shop_id = current_user.get("user_id", 1)
+    user_id = current_user.id if hasattr(current_user, 'id') else current_user.get("user_id")
+    print("Creating product for user:", user_id)
+    print("Payload:", product.model_dump())
+    
     try:
-        payload = product.model_dump()
-        print("Product create payload:", payload)
+        db_product = models.Product(**product.model_dump())
+        db_product.shop_id = user_id
         
-        db_product = models.Product(**payload, shop_id=shop_id)
         db.add(db_product)
         db.commit()
         db.refresh(db_product)
         
-        db_inv = models.Inventory(shop_id=shop_id, product_id=db_product.id, quantity_on_hand=0)
+        db_inv = models.Inventory(shop_id=user_id, product_id=db_product.id, quantity_on_hand=0)
         db.add(db_inv)
         db.commit()
         return db_product
     except Exception as e:
-        print("Error:", e)
+        print("Error during insertion:", e)
         db.rollback()
         raise HTTPException(status_code=500, detail="Database insertion failed.")
 

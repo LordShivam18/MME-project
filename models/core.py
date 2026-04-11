@@ -20,7 +20,7 @@ class Shop(Base):
 class Product(Base):
     __tablename__ = "products"
     id = Column(Integer, primary_key=True, index=True)
-    shop_id = Column(Integer, ForeignKey("shops.id"), index=True)
+    shop_id = Column(Integer, ForeignKey("users.id"), index=True, nullable=False)
     name = Column(String, index=True)
     sku = Column(String, index=True)
     category = Column(String, index=True)
@@ -36,7 +36,7 @@ class Product(Base):
 class Inventory(Base):
     __tablename__ = "inventory"
     id = Column(Integer, primary_key=True, index=True)
-    shop_id = Column(Integer, ForeignKey("shops.id"), index=True)
+    shop_id = Column(Integer, ForeignKey("users.id"), index=True)
     product_id = Column(Integer, ForeignKey("products.id"), index=True)
     quantity_on_hand = Column(Integer, default=0)
     reorder_point = Column(Integer, default=0)
@@ -51,7 +51,7 @@ class Inventory(Base):
 class SaleTransaction(Base):
     __tablename__ = "sales"
     id = Column(Integer, primary_key=True, index=True)
-    shop_id = Column(Integer, ForeignKey("shops.id"), index=True)
+    shop_id = Column(Integer, ForeignKey("users.id"), index=True)
     product_id = Column(Integer, ForeignKey("products.id"), index=True)
     quantity_sold = Column(Integer)
     sale_price = Column(Float)
