@@ -5,6 +5,7 @@ import axiosClient from './api/axiosClient';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 import ProductManager from './pages/ProductManager';
+import Inventory from './pages/Inventory';
 
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -20,7 +21,7 @@ function App() {
       }
       try {
         // Ping explicit backend Auth route to cryptographically verify token
-        await axiosClient.get('/auth/me');
+        await axiosClient.get('/api/v1/auth/me');
         setIsAuthenticated(true);
       } catch (error) {
         // If it throws 401, axiosClient interceptor automatically wipes it
@@ -56,6 +57,12 @@ function App() {
         <Route path="/products" element={
           <ProtectedRoute>
             <ProductManager />
+          </ProtectedRoute>
+        } />
+
+        <Route path="/inventory" element={
+          <ProtectedRoute>
+            <Inventory />
           </ProtectedRoute>
         } />
         

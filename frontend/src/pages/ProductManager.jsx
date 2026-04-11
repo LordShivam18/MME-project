@@ -20,7 +20,7 @@ export default function ProductManager() {
   const fetchProducts = async () => {
     setIsLoading(true);
     try {
-      const res = await axiosClient.get(`/products/?shop_id=${shopId}&limit=50`);
+      const res = await axiosClient.get(`/api/v1/products/?shop_id=${shopId}&limit=50`);
       setProducts(res.data);
     } catch (err) {
       console.error(err);
@@ -48,7 +48,7 @@ export default function ProductManager() {
     }
 
     try {
-      await axiosClient.post(`/products/?shop_id=${shopId}`, {
+      await axiosClient.post(`/api/v1/products/?shop_id=${shopId}`, {
         name, sku, category, cost_price: parseFloat(costPrice), base_price: parseFloat(basePrice), lead_time_days: parseInt(leadTime)
       });
       // Clear form and refetch bounds
@@ -65,7 +65,7 @@ export default function ProductManager() {
       if (!saleQty || saleQty <= 0) return alert("Sale aborted: Invalid amount.");
 
       // ACID Transaction endpoint
-      await axiosClient.post(`/sales/?shop_id=${shopId}`, {
+      await axiosClient.post(`/api/v1/sales/?shop_id=${shopId}`, {
         product_id: productId,
         quantity_sold: saleQty,
         sale_price: 25.00 // Assuming standard price for MVP simulation

@@ -11,7 +11,7 @@ export default function PredictionWidget({ shopId, productId }) {
     setIsLoading(true);
     setError(null);
     try {
-      const response = await axiosClient.get(`/predictions/${productId}?shop_id=${shopId}&window_size_days=14`);
+      const response = await axiosClient.get(`/api/v1/predictions/${productId}?shop_id=${shopId}&window_size_days=14`);
       setPrediction(response.data);
     } catch (err) {
       setError(err.response?.data?.detail || "Calculation failed.");

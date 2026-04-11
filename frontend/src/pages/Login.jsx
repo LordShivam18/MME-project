@@ -19,7 +19,7 @@ export default function Login({ onLogin }) {
       formData.append('username', email);
       formData.append('password', password);
       
-      const response = await axiosClient.post('/auth/token', formData);
+      const response = await axiosClient.post('/api/v1/auth/token', formData);
       localStorage.setItem('token', response.data.access_token);
       onLogin(); // Triggers the App route protection wrapper to flip state
     } catch (err) {

@@ -14,6 +14,7 @@ export default function Navigation() {
        <div style={{ display: 'flex', gap: '2rem', fontWeight: 'bold' }}>
          <Link to="/dashboard" style={{ textDecoration: 'none', color: '#333' }}>Dashboard</Link>
          <Link to="/products" style={{ textDecoration: 'none', color: '#333' }}>Manage Products</Link>
+         <Link to="/inventory" style={{ textDecoration: 'none', color: '#333' }}>Inventory Intelligence</Link>
        </div>
        <button onClick={handleLogout} style={{ padding: '0.25rem 1rem', background: '#dc3545', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>
          Logout

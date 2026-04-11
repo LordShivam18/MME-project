@@ -1,70 +1,45 @@
 import { useState, useEffect } from 'react';
 import axiosClient from '../api/axiosClient';
 import Navigation from '../components/Navigation';
-import PredictionWidget from '../components/PredictionWidget';
-import { LoadingSpinner, ErrorState, EmptyState } from '../components/StateSpinners';
+import { LoadingSpinner, ErrorState } from '../components/StateSpinners';
 
 export default function Dashboard() {
-  const [summaryData, setSummaryData] = useState([]);
+  const [user, setUser] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
-  
-  const shopId = 1; 
-
-  const fetchSummary = async () => {
-    setIsLoading(true);
-    try {
-      // Replaced Promise.all() iterating fetches with 1 massive SQL Join Query Call
-      const res = await axiosClient.get(`/inventory/summary?shop_id=${shopId}&limit=100`);
-      setSummaryData(res.data);
-    } catch (err) {
-      setError("Failed to load dashboard data. Check backend connection.");
-    } finally {
-      setIsLoading(false);
-    }
-  };
 
   useEffect(() => {
-    fetchSummary();
+    const fetchMe = async () => {
+      try {
+        const res = await axiosClient.get('/api/v1/auth/me');
+        setUser(res.data.user);
+      } catch (err) {
+        setError("Unable to load user session.");
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    fetchMe();
   }, []);
 
   return (
     <div style={{ fontFamily: 'sans-serif', maxWidth: '1200px', margin: '0 auto', padding: '1rem' }}>
       <Navigation />
       
-      <h2>Real-Time Inventory Status</h2>
-      <p style={{ color: '#666' }}>Review active stock quantities and ping the ML Engine exclusively when required.</p>
-      
-      {isLoading && <LoadingSpinner />}
-      {error && <ErrorState message={error} />}
-      {!isLoading && summaryData.length === 0 && !error && (
-        <EmptyState message="Your shop is completely empty!" suggestion="Head to 'Manage Products' to establish your first vendor SKU." />
-      )}
-
-      <div style={{ display: 'grid', gap: '1rem', marginTop: '2rem' }}>
-        {summaryData.map(item => {
-          const qty = item.quantity_on_hand;
-          const reorderLimit = item.reorder_point;
-          const isLowStock = qty <= reorderLimit;
-
-          return (
-            <div key={item.product_id} style={{ border: `2px solid ${isLowStock ? '#ffcccc' : '#eee'}`, borderRadius: '8px', padding: '1.5rem', display: 'flex', justifyContent: 'space-between' }}>
-              <div>
-                <h3 style={{ margin: '0' }}>{item.name} <span style={{ fontSize: '0.8rem', color: '#888' }}>({item.sku})</span></h3>
-                <p style={{ margin: '0.5rem 0', fontWeight: 'bold', color: isLowStock ? 'red' : 'green' }}>
-                  Current Stock: {qty} {isLowStock && "⚠️ (REORDER NOW)"}
-                </p>
-                <div style={{ fontSize: '0.9rem', color: '#555', marginTop: '1rem' }}>
-                   Base Price: ${item.base_price.toFixed(2)} | Category: {item.category}
-                </div>
-              </div>
-              
-              <div style={{ width: '350px' }}>
-                 <PredictionWidget shopId={shopId} productId={item.product_id} />
-              </div>
-            </div>
-          );
-        })}
+      <div style={{ border: '2px dashed #ccc', padding: '3rem', borderRadius: '8px', textAlign: 'center', marginTop: '2rem', backgroundColor: '#f9f9f9' }}>
+        <h2>System Dashboard</h2>
+        <p style={{ color: '#666' }}>Secure backend authorization complete.</p>
+        
+        {isLoading && <LoadingSpinner />}
+        {error && <ErrorState message={error} />}
+        
+        {user && (
+          <div style={{ marginTop: '2rem', background: '#333', color: '#fff', padding: '2rem', borderRadius: '8px', display: 'inline-block' }}>
+            <h3 style={{ borderBottom: '1px solid #555', paddingBottom: '0.5rem', marginBottom: '1rem' }}>Active Session Identity</h3>
+            <div style={{ fontSize: '1.2rem', margin: '0.5rem 0' }}><strong>Role:</strong> {user.role || 'Admin'}</div>
+            <div style={{ fontSize: '1.2rem', margin: '0.5rem 0', color: '#0dcaf0' }}><strong>Account ID:</strong> {user.email || user.user_id || 'test@gmail.com'}</div>
+          </div>
+        )}
       </div>
     </div>
   );
