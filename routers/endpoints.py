@@ -34,10 +34,7 @@ def login(request: Request, form_data: OAuth2PasswordRequestForm = Depends(), db
         
     logger.info("User found")
     
-    from auth import preprocess_password
-    processed_pw = preprocess_password(form_data.password)
-    
-    if not pwd_context.verify(processed_pw, user.hashed_password):
+    if not pwd_context.verify(form_data.password, user.hashed_password):
         logger.warning("Password failed")
         raise HTTPException(status_code=401, detail="Incorrect credentials")
         

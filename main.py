@@ -30,7 +30,7 @@ async def lifespan(app: FastAPI):
     import models.core   # force model registration
     from database import Base, engine, SessionLocal
     from models.core import User
-    from auth import preprocess_password, pwd_context
+    from auth import pwd_context
 
     try:
         print("Connecting to database...")
@@ -45,7 +45,7 @@ async def lifespan(app: FastAPI):
         user = db.query(User).filter(User.email == "test@gmail.com").first()
 
         if not user:
-            hashed = pwd_context.hash(preprocess_password("Test@123456"))
+            hashed = pwd_context.hash("Test@123456")
 
             new_user = User(
                 email="test@gmail.com",

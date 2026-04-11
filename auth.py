@@ -60,7 +60,3 @@ def validate_password(password: str) -> None:
         raise ValueError("Password must contain at least one digit.")
     if not re.search(r"[!@#$%^&*(),.?\":{}|<>]", password):
         raise ValueError("Password must contain at least one special character.")
-
-def preprocess_password(password: str) -> str:
-    """Pre-hashes the password using SHA-256 to safely bypass bcrypt's 72-byte limit."""
-    return sha256(password.encode()).hexdigest()
