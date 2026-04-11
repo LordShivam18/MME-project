@@ -8,8 +8,8 @@ export default function Login({ onLogin }) {
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
+  const handleLogin = async (e) => {
+    if (e) e.preventDefault();
     setError('');
     setIsLoading(true);
     
@@ -59,7 +59,7 @@ export default function Login({ onLogin }) {
           </div>
         )}
         
-        <form onSubmit={handleSubmit} className="login-form">
+        <form onSubmit={handleLogin} className="login-form">
           <div className="form-group">
             <label htmlFor="email">Email address</label>
             <input 
