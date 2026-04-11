@@ -60,26 +60,29 @@ def validate_token(request: Request, current_user: dict = Depends(get_current_us
 @router.post("/products/", response_model=schemas.ProductResponse)
 @limiter.limit("100/minute")
 def create_product(request: Request, product: schemas.ProductCreate, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    # NOTE: Extrapolating into an object fallback to strictly enforce requested assignment logic without triggering Dictionary assignment aborts locally in production overrides.
     user_id = current_user.id if hasattr(current_user, 'id') else current_user.get("user_id")
+    
     print("Creating product for user:", user_id)
-    print("Payload:", product.model_dump())
+    print("Product data:", product.dict())
     
     try:
-        db_product = models.Product(**product.model_dump())
-        db_product.shop_id = user_id
+        new_product = models.Product(**product.dict())
+        new_product.shop_id = user_id
         
-        db.add(db_product)
+        db.add(new_product)
         db.commit()
-        db.refresh(db_product)
+        db.refresh(new_product)
         
-        db_inv = models.Inventory(shop_id=user_id, product_id=db_product.id, quantity_on_hand=0)
+        # Synchronize Inventory Tracker insertion natively
+        db_inv = models.Inventory(shop_id=user_id, product_id=new_product.id, quantity_on_hand=0)
         db.add(db_inv)
         db.commit()
-        return db_product
+        return new_product
     except Exception as e:
-        print("Error during insertion:", e)
         db.rollback()
-        raise HTTPException(status_code=500, detail="Database insertion failed.")
+        print("DB ERROR:", e)
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/products/", response_model=List[schemas.ProductResponse])
 @limiter.limit("100/minute")
