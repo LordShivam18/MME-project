@@ -63,7 +63,13 @@ def startup():
         user = db.query(models.core.User).filter(models.core.User.email == "test@gmail.com").first()
         
         if not user:
-            hashed_pw = pwd_context.hash("123456")
+            from auth import preprocess_password, validate_password
+            
+            raw_seed_pw = "Test@123456"
+            validate_password(raw_seed_pw)
+            processed_pw = preprocess_password(raw_seed_pw)
+            
+            hashed_pw = pwd_context.hash(processed_pw)
             new_user = models.core.User(email="test@gmail.com", hashed_password=hashed_pw)
             db.add(new_user)
             db.commit()

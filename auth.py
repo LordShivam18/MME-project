@@ -42,3 +42,22 @@ def rate_limit_key_func(request: Request) -> str:
     if forwarded:
         return f"ip:{forwarded.split(',')[0]}"
     return f"ip:{request.client.host}"
+
+import re
+from hashlib import sha256
+
+def validate_password(password: str) -> None:
+    if " " in password:
+        raise ValueError("Password cannot contain spaces.")
+    if not re.search(r"[A-Z]", password):
+        raise ValueError("Password must contain at least one uppercase letter.")
+    if not re.search(r"[a-z]", password):
+        raise ValueError("Password must contain at least one lowercase letter.")
+    if not re.search(r"\d", password):
+        raise ValueError("Password must contain at least one digit.")
+    if not re.search(r"[!@#$%^&*(),.?\":{}|<>]", password):
+        raise ValueError("Password must contain at least one special character.")
+
+def preprocess_password(password: str) -> str:
+    """Pre-hashes the password using SHA-256 to safely bypass bcrypt's 72-byte limit."""
+    return sha256(password.encode()).hexdigest()
