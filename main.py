@@ -43,19 +43,15 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 # ---------------- STARTUP CHECK ----------------
 @app.on_event("startup")
 def startup():
-    print("🚀 Starting app...")
+    import models.core   # force model registration
+    from database import Base, engine
 
-    # Debug env
-    print("DATABASE_URL:", os.getenv("DATABASE_URL"))
-    print("SECRET_KEY:", os.getenv("SECRET_KEY"))
-
-    # Safe DB check
     try:
-        with engine.connect() as conn:
-            conn.execute(text("SELECT 1"))
-        print("✅ Database connected")
+        print("Connecting to database...")
+        Base.metadata.create_all(bind=engine)
+        print("Tables created successfully")
     except Exception as e:
-        print("❌ Database connection failed:", e)
+        print("Database initialization failed:", str(e))
 
 # ---------------- REQUEST LOGGER ----------------
 @app.middleware("http")
