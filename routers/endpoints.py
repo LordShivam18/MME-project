@@ -100,13 +100,14 @@ def read_products(request: Request, skip: int = 0, limit: int = 100, db: Session
 # --- Sales Entry & Inventory Updater (ACID Transaction) ---
 @router.post("/sales/", response_model=schemas.SalesResponse)
 @limiter.limit("100/minute")
-def log_sale(request: Request, sale: schemas.SalesCreate, shop_id: int, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+def log_sale(request: Request, sale: schemas.SalesCreate, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    user_id = current_user.id if hasattr(current_user, 'id') else current_user.get("user_id")
     try:
-        db_sale = models.SaleTransaction(**sale.model_dump(), shop_id=shop_id)
+        db_sale = models.SaleTransaction(**sale.model_dump(), shop_id=user_id)
         db.add(db_sale)
         
         inventory = db.query(models.Inventory).filter(
-            models.Inventory.shop_id == shop_id,
+            models.Inventory.shop_id == user_id,
             models.Inventory.product_id == sale.product_id
         ).with_for_update().first()
         
@@ -120,7 +121,7 @@ def log_sale(request: Request, sale: schemas.SalesCreate, shop_id: int, db: Sess
         db.refresh(db_sale)
         
         # KEY ADDITION: Invalidate Prediction Cache upon success
-        invalidate_prediction_cache(shop_id, sale.product_id)
+        invalidate_prediction_cache(user_id, sale.product_id)
         
         return db_sale
     except ValueError as e:

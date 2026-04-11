@@ -16,6 +16,13 @@ export default function ProductManager() {
   const [costPrice, setCostPrice] = useState(0);
   const [sellingPrice, setSellingPrice] = useState(0);
   const [leadTime, setLeadTime] = useState(1);
+  const [successMessage, setSuccessMessage] = useState('');
+  const [editingProductId, setEditingProductId] = useState(null);
+
+  const clearMsg = () => {
+    setFormError('');
+    setSuccessMessage('');
+  };
 
   const fetchProducts = async () => {
     setIsLoading(true);
@@ -36,9 +43,9 @@ export default function ProductManager() {
 
   const handleAddProduct = async (e) => {
     e.preventDefault();
-    setFormError('');
+    clearMsg();
 
-    // Native Frontend Data Validation (prevents pointless 422 API errors)
+    // Native Frontend Data Validation
     if (costPrice <= 0 || sellingPrice <= 0) {
       setFormError("Prices must be greater than zero.");
       return;
@@ -49,6 +56,7 @@ export default function ProductManager() {
     }
 
     try {
+      setIsLoading(true);
       const payload = {
         name,
         sku,
@@ -58,14 +66,22 @@ export default function ProductManager() {
         lead_time_days: Number(leadTime)
       };
       
-      await axiosClient.post("/api/v1/products/", payload);
+      if (editingProductId) {
+        await axiosClient.put(`/api/v1/products/${editingProductId}`, payload);
+        setSuccessMessage("Product updated successfully");
+        setEditingProductId(null);
+      } else {
+        await axiosClient.post("/api/v1/products/", payload);
+        setSuccessMessage("Product added successfully");
+      }
+      
       // Clear form and refetch bounds
       setName(''); setSku(''); setCategory(''); setCostPrice(0); setSellingPrice(0); setLeadTime(1);
-      fetchProducts();
+      await fetchProducts();
     } catch (err) {
-      console.error("Product creation error:", err);
+      console.error("Product operation error:", err);
       // Properly extract the FastAPI schema validation message blocks if embedded
-      let errorMsg = "Failed to create product in Database.";
+      let errorMsg = "Something went wrong";
       if (err.response?.data?.detail) {
         if (typeof err.response.data.detail === 'string') {
           errorMsg = err.response.data.detail;
@@ -74,23 +90,48 @@ export default function ProductManager() {
         }
       }
       setFormError(errorMsg);
+    } finally {
+      setIsLoading(false);
     }
   };
 
-  const handleSimulateSale = async (productId) => {
-    try {
-      const saleQty = parseInt(prompt("How many items did you sell just now? (Integer)"));
-      if (!saleQty || saleQty <= 0) return alert("Sale aborted: Invalid amount.");
+  const handleEditClick = (p) => {
+    clearMsg();
+    setEditingProductId(p.id);
+    setName(p.name);
+    setSku(p.sku);
+    setCategory(p.category);
+    setCostPrice(p.cost_price || 0);
+    setSellingPrice(p.selling_price || 0);
+    setLeadTime(p.lead_time_days || 1);
+  };
 
-      // ACID Transaction endpoint
-      await axiosClient.post(`/api/v1/sales/?shop_id=${shopId}`, {
-        product_id: productId,
-        quantity_sold: saleQty,
-        sale_price: 25.00 // Assuming standard price for MVP simulation
-      });
-      alert(`Sale of ${saleQty} items securely recorded in DB Ledger!`);
+  const handleDelete = async (id) => {
+    try {
+      clearMsg();
+      setIsLoading(true);
+      await axiosClient.delete(`/api/v1/products/${id}`);
+      setSuccessMessage("Product deleted successfully");
+      await fetchProducts();
     } catch (err) {
-      alert("SALE FAILED: " + (err.response?.data?.detail || "Internal error"));
+      setFormError(err.response?.data?.detail || "Something went wrong");
+      setIsLoading(false);
+    }
+  };
+
+  const handleSale = async (product_id) => {
+    try {
+      clearMsg();
+      // ACID Transaction endpoint utilizing explicit quantity_sold mappings silently without abstracting 0.01 requirement drops
+      await axiosClient.post(`/api/v1/sales/`, {
+        product_id: product_id,
+        quantity_sold: 1,
+        sale_price: 25.00
+      });
+      setSuccessMessage("Sale logically recorded!");
+      await fetchProducts();
+    } catch (err) {
+      setFormError(err.response?.data?.detail || "Internal error");
     }
   };
 
@@ -103,22 +144,30 @@ export default function ProductManager() {
         <div style={{ flex: '1', padding: '1.5rem', background: '#f8f9fa', border: '1px solid #dee2e6', borderRadius: '8px' }}>
           <h3>Catalog New Vendor Product</h3>
           {formError && <ErrorState message={formError} />}
+          {successMessage && <div style={{ background: '#d4edda', color: '#155724', padding: '0.8rem', borderRadius: '4px', marginBottom: '1rem' }}>{successMessage}</div>}
           
           <form onSubmit={handleAddProduct} style={{ display: 'flex', flexDirection: 'column', gap: '0.8rem' }}>
-            <input placeholder="Product Name" value={name} onChange={e => setName(e.target.value)} required style={{ padding: '0.3rem' }} />
-            <input placeholder="Supplier SKU (Unique)" value={sku} onChange={e => setSku(e.target.value)} required style={{ padding: '0.3rem' }} />
-            <input placeholder="System Category" value={category} onChange={e => setCategory(e.target.value)} required style={{ padding: '0.3rem' }} />
+            <input placeholder="Product Name" value={name} onChange={e => { clearMsg(); setName(e.target.value); }} required style={{ padding: '0.3rem' }} />
+            <input placeholder="Supplier SKU (Unique)" value={sku} onChange={e => { clearMsg(); setSku(e.target.value); }} required style={{ padding: '0.3rem' }} />
+            <input placeholder="System Category" value={category} onChange={e => { clearMsg(); setCategory(e.target.value); }} required style={{ padding: '0.3rem' }} />
             
             <div style={{ display: 'flex', gap: '1rem' }}>
-              <label>Cost Price:<input type="number" step="0.01" value={costPrice} onChange={e => setCostPrice(e.target.value)} required style={{ width: '100%' }} /></label>
-              <label>Selling Price:<input type="number" step="0.01" value={sellingPrice} onChange={e => setSellingPrice(e.target.value)} required style={{ width: '100%' }} /></label>
+              <label>Cost Price:<input type="number" step="0.01" value={costPrice} onChange={e => { clearMsg(); setCostPrice(e.target.value); }} required style={{ width: '100%' }} /></label>
+              <label>Selling Price:<input type="number" step="0.01" value={sellingPrice} onChange={e => { clearMsg(); setSellingPrice(e.target.value); }} required style={{ width: '100%' }} /></label>
             </div>
             
             <label>Vendor Lead Time (Days):
-              <input type="number" value={leadTime} onChange={e => setLeadTime(e.target.value)} required style={{ width: '100%' }} />
+              <input type="number" value={leadTime} onChange={e => { clearMsg(); setLeadTime(e.target.value); }} required style={{ width: '100%' }} />
             </label>
             
-            <button type="submit" style={{ background: '#28a745', color: 'white', padding: '0.5rem', border: 'none', cursor: 'pointer', marginTop: '1rem' }}>Add Product to Catalog</button>
+            <button type="submit" disabled={isLoading} style={{ opacity: isLoading ? 0.7 : 1, background: '#28a745', color: 'white', padding: '0.5rem', border: 'none', cursor: 'pointer', marginTop: '1rem' }}>
+              {editingProductId ? "Update Product" : "Add Product to Catalog"}
+            </button>
+            {editingProductId && (
+              <button type="button" onClick={() => { clearMsg(); setEditingProductId(null); }} style={{ background: '#6c757d', color: 'white', padding: '0.5rem', border: 'none', cursor: 'pointer', marginTop: '0.5rem' }}>
+                Cancel Edit
+              </button>
+            )}
           </form>
         </div>
 
@@ -142,8 +191,10 @@ export default function ProductManager() {
                         <td style={{ padding: '0.5rem' }}><strong>{p.name}</strong> <br/><small>{p.sku}</small></td>
                         <td style={{ padding: '0.5rem' }}>{p.category}</td>
                         <td style={{ padding: '0.5rem' }}>{p.lead_time_days} days</td>
-                        <td style={{ padding: '0.5rem' }}>
-                          <button onClick={() => handleSimulateSale(p.id)} style={{ padding: '0.3rem', background: '#0dcaf0', border: 'none', cursor: 'pointer' }}>Record Sale</button>
+                        <td style={{ padding: '0.5rem', display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                          <button onClick={() => handleEditClick(p)} style={{ padding: '0.3rem 0.6rem', background: '#ffc107', borderRadius: '4px', border: 'none', cursor: 'pointer' }}>Edit</button>
+                          <button onClick={() => handleDelete(p.id)} style={{ padding: '0.3rem 0.6rem', background: '#dc3545', color: 'white', borderRadius: '4px', border: 'none', cursor: 'pointer' }}>Delete</button>
+                          <button onClick={() => handleSale(p.id)} style={{ padding: '0.3rem 0.6rem', background: '#0dcaf0', borderRadius: '4px', border: 'none', cursor: 'pointer' }}>Record Sale</button>
                         </td>
                       </tr>
                     ))}
