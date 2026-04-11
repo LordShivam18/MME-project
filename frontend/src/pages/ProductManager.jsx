@@ -14,13 +14,14 @@ export default function ProductManager() {
   const [sku, setSku] = useState('');
   const [category, setCategory] = useState('');
   const [costPrice, setCostPrice] = useState(0);
-  const [basePrice, setBasePrice] = useState(0);
+  const [sellingPrice, setSellingPrice] = useState(0);
   const [leadTime, setLeadTime] = useState(1);
 
   const fetchProducts = async () => {
     setIsLoading(true);
     try {
-      const res = await axiosClient.get(`/api/v1/products/?shop_id=${shopId}&limit=50`);
+      // Cleaned up query logic since shop_id is automatically pulled via backend tokens securely
+      const res = await axiosClient.get(`/api/v1/products/?limit=50`);
       setProducts(res.data);
     } catch (err) {
       console.error(err);
@@ -38,7 +39,7 @@ export default function ProductManager() {
     setFormError('');
 
     // Native Frontend Data Validation (prevents pointless 422 API errors)
-    if (costPrice <= 0 || basePrice <= 0) {
+    if (costPrice <= 0 || sellingPrice <= 0) {
       setFormError("Prices must be greater than zero.");
       return;
     }
@@ -48,14 +49,31 @@ export default function ProductManager() {
     }
 
     try {
-      await axiosClient.post(`/api/v1/products/?shop_id=${shopId}`, {
-        name, sku, category, cost_price: parseFloat(costPrice), base_price: parseFloat(basePrice), lead_time_days: parseInt(leadTime)
-      });
+      const payload = {
+        name,
+        sku,
+        category,
+        cost_price: Number(costPrice),
+        selling_price: Number(sellingPrice),
+        lead_time_days: Number(leadTime)
+      };
+      
+      await axiosClient.post("/api/v1/products/", payload);
       // Clear form and refetch bounds
-      setName(''); setSku(''); setCategory(''); setCostPrice(0); setBasePrice(0); setLeadTime(1);
+      setName(''); setSku(''); setCategory(''); setCostPrice(0); setSellingPrice(0); setLeadTime(1);
       fetchProducts();
     } catch (err) {
-      setFormError(err.response?.data?.detail || "Failed to create product in Database.");
+      console.error("Product creation error:", err);
+      // Properly extract the FastAPI schema validation message blocks if embedded
+      let errorMsg = "Failed to create product in Database.";
+      if (err.response?.data?.detail) {
+        if (typeof err.response.data.detail === 'string') {
+          errorMsg = err.response.data.detail;
+        } else {
+          errorMsg = JSON.stringify(err.response.data.detail);
+        }
+      }
+      setFormError(errorMsg);
     }
   };
 
@@ -93,7 +111,7 @@ export default function ProductManager() {
             
             <div style={{ display: 'flex', gap: '1rem' }}>
               <label>Cost Price:<input type="number" step="0.01" value={costPrice} onChange={e => setCostPrice(e.target.value)} required style={{ width: '100%' }} /></label>
-              <label>Selling Price:<input type="number" step="0.01" value={basePrice} onChange={e => setBasePrice(e.target.value)} required style={{ width: '100%' }} /></label>
+              <label>Selling Price:<input type="number" step="0.01" value={sellingPrice} onChange={e => setSellingPrice(e.target.value)} required style={{ width: '100%' }} /></label>
             </div>
             
             <label>Vendor Lead Time (Days):

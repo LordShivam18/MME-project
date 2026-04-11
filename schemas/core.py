@@ -11,7 +11,7 @@ class ProductBase(BaseModel):
     
     # Numeric clamping to prevent DB integer/float overflow attacks
     cost_price: float = Field(..., gt=0, le=9999999.99, example=10.50)
-    base_price: float = Field(..., gt=0, le=9999999.99, example=25.00)
+    selling_price: float = Field(..., gt=0, le=9999999.99, example=25.00)
     lead_time_days: int = Field(..., ge=1, le=365, example=5)
 
 class ProductCreate(ProductBase):
@@ -58,7 +58,7 @@ class InventorySummaryResponse(BaseModel):
     name: str
     sku: str
     category: str
-    base_price: float
+    selling_price: float
     quantity_on_hand: int
     reorder_point: int
     

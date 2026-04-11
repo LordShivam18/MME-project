@@ -54,7 +54,7 @@ export default function Inventory() {
                   Current Stock: {qty} {isLowStock && "⚠️ (REORDER NOW)"}
                 </p>
                 <div style={{ fontSize: '0.9rem', color: '#555', marginTop: '1rem' }}>
-                   Base Price: ${item.base_price.toFixed(2)} | Category: {item.category}
+                   Selling Price: ${item.selling_price?.toFixed(2)} | Category: {item.category}
                 </div>
               </div>
               

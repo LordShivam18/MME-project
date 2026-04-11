@@ -59,20 +59,30 @@ def validate_token(request: Request, current_user: dict = Depends(get_current_us
 # --- Products CRUD ---
 @router.post("/products/", response_model=schemas.ProductResponse)
 @limiter.limit("100/minute")
-def create_product(request: Request, product: schemas.ProductCreate, shop_id: int, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    db_product = models.Product(**product.model_dump(), shop_id=shop_id)
-    db.add(db_product)
-    db.commit()
-    db.refresh(db_product)
-    
-    db_inv = models.Inventory(shop_id=shop_id, product_id=db_product.id, quantity_on_hand=0)
-    db.add(db_inv)
-    db.commit()
-    return db_product
+def create_product(request: Request, product: schemas.ProductCreate, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    shop_id = current_user.get("user_id", 1)
+    try:
+        payload = product.model_dump()
+        print("Product create payload:", payload)
+        
+        db_product = models.Product(**payload, shop_id=shop_id)
+        db.add(db_product)
+        db.commit()
+        db.refresh(db_product)
+        
+        db_inv = models.Inventory(shop_id=shop_id, product_id=db_product.id, quantity_on_hand=0)
+        db.add(db_inv)
+        db.commit()
+        return db_product
+    except Exception as e:
+        print("Error:", e)
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Database insertion failed.")
 
 @router.get("/products/", response_model=List[schemas.ProductResponse])
 @limiter.limit("100/minute")
-def read_products(request: Request, shop_id: int, skip: int = 0, limit: int = 100, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+def read_products(request: Request, skip: int = 0, limit: int = 100, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    shop_id = current_user.get("user_id", 1)
     products = db.query(models.Product).filter(models.Product.shop_id == shop_id).offset(skip).limit(limit).all()
     return products
 
@@ -130,7 +140,7 @@ def get_inventory_summary(request: Request, shop_id: int, limit: int = 100, db: 
             "name": product.name,
             "sku": product.sku,
             "category": product.category,
-            "base_price": product.base_price,
+            "selling_price": product.selling_price,
             "quantity_on_hand": inventory.quantity_on_hand,
             "reorder_point": inventory.reorder_point
         })

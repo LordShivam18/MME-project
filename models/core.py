@@ -25,7 +25,7 @@ class Product(Base):
     sku = Column(String, index=True)
     category = Column(String, index=True)
     cost_price = Column(Float)
-    base_price = Column(Float)
+    selling_price = Column(Float)
     lead_time_days = Column(Integer)
     created_at = Column(DateTime, default=datetime.utcnow)
     
