@@ -45,6 +45,9 @@ def rate_limit_key_func(request: Request) -> str:
 
 import re
 from hashlib import sha256
+from passlib.context import CryptContext
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 def validate_password(password: str) -> None:
     if " " in password:

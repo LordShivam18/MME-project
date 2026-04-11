@@ -58,29 +58,30 @@ def startup():
     db = SessionLocal()
     try:
         print("Seeding user started")
-        pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
         
         user = db.query(models.core.User).filter(models.core.User.email == "test@gmail.com").first()
         
         if not user:
-            from auth import preprocess_password, validate_password
+            from auth import preprocess_password, pwd_context
             
-            raw_seed_pw = "Test@123456"
-            validate_password(raw_seed_pw)
-            processed_pw = preprocess_password(raw_seed_pw)
+            processed = preprocess_password("Test@123456")
+            hashed_password = pwd_context.hash(processed)
             
-            hashed_pw = pwd_context.hash(processed_pw)
-            new_user = models.core.User(email="test@gmail.com", hashed_password=hashed_pw)
+            new_user = models.core.User(
+                email="test@gmail.com",
+                hashed_password=hashed_password
+            )
+            
             db.add(new_user)
             db.commit()
             db.refresh(new_user)
-            print("User created successfully")
+            print("User created:", new_user.email)
         else:
             print("User already exists")
             
     except Exception as e:
+        print("Seeding failed:", e)
         db.rollback()
-        print("Seeding error:", e)
     finally:
         db.close()
 

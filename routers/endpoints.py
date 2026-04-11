@@ -18,7 +18,7 @@ from fastapi.security import OAuth2PasswordRequestForm
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+from auth import pwd_context
 SECRET_KEY = os.getenv("SECRET_KEY", "super_secret_dev_key")
 
 # --- Auth Endpoints ---
