@@ -65,25 +65,29 @@ def create_product(request: Request, product: schemas.ProductCreate, db: Session
     user_id = current_user.id if hasattr(current_user, 'id') else current_user.get("user_id")
     
     print("Creating product for user:", user_id)
-    print("Product data:", product.dict())
+    print("Product data:", product.model_dump())
+    
+    sku_exists = db.query(models.Product).filter(
+        models.Product.sku == product.sku,
+        models.Product.shop_id == user_id
+    ).first()
+
+    if sku_exists:
+        raise HTTPException(status_code=400, detail="Product with this SKU already exists")
     
     try:
-        new_product = models.Product(**product.dict())
+        new_product = models.Product(**product.model_dump())
         new_product.shop_id = user_id
-        
         db.add(new_product)
-        db.commit()
-        db.refresh(new_product)
+        db.flush() # Locks generation sequence cleanly without terminating bounds
         
-        # Synchronize Inventory Tracker insertion natively
+        # Synchronize Inventory Tracker natively onto the identical transaction pipeline
         db_inv = models.Inventory(shop_id=user_id, product_id=new_product.id, quantity_on_hand=0)
         db.add(db_inv)
+        
         db.commit()
+        db.refresh(new_product)
         return new_product
-    except IntegrityError as e:
-        db.rollback()
-        print("DB Integrity Error (Duplicate SKU):", e)
-        raise HTTPException(status_code=400, detail="Product with this SKU already exists")
     except Exception as e:
         db.rollback()
         print("DB ERROR:", e)
@@ -98,38 +102,61 @@ def read_products(request: Request, skip: int = 0, limit: int = 100, db: Session
 
 
 # --- Sales Entry & Inventory Updater (ACID Transaction) ---
-@router.post("/sales/", response_model=schemas.SalesResponse)
+@router.post("/sales/")
 @limiter.limit("100/minute")
-def log_sale(request: Request, sale: schemas.SalesCreate, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+def log_sale(request: Request, payload: schemas.SalesCreate, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     user_id = current_user.id if hasattr(current_user, 'id') else current_user.get("user_id")
+
+    product = db.query(models.Product).filter(
+        models.Product.id == payload.product_id,
+        models.Product.shop_id == user_id
+    ).first()
+
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+
+    inventory = db.query(models.Inventory).filter(
+        models.Inventory.product_id == payload.product_id,
+        models.Inventory.shop_id == user_id
+    ).with_for_update().first()
+
+    # FIX: auto-create inventory if missing
+    if not inventory:
+        inventory = models.Inventory(
+            product_id=payload.product_id,
+            shop_id=user_id,
+            quantity_on_hand=0
+        )
+        db.add(inventory)
+        db.flush()
+
+    # FIX: prevent negative stock
+    if inventory.quantity_on_hand < payload.quantity_sold:
+        raise HTTPException(status_code=400, detail="Not enough stock")
+
+    inventory.quantity_on_hand -= payload.quantity_sold
+
+    sale = models.SaleTransaction(
+        product_id=payload.product_id,
+        shop_id=user_id,
+        quantity_sold=payload.quantity_sold,
+        sale_price=payload.sale_price
+    )
+
+    db.add(sale)
+    
     try:
-        db_sale = models.SaleTransaction(**sale.model_dump(), shop_id=user_id)
-        db.add(db_sale)
-        
-        inventory = db.query(models.Inventory).filter(
-            models.Inventory.shop_id == user_id,
-            models.Inventory.product_id == sale.product_id
-        ).with_for_update().first()
-        
-        if not inventory:
-            inventory = models.Inventory(shop_id=user_id, product_id=sale.product_id, quantity_on_hand=0)
-            db.add(inventory)
-            db.flush() # ensure ID executes
-            
-        inventory.quantity_on_hand = max(0, inventory.quantity_on_hand - sale.quantity_sold)
         db.commit()
-        db.refresh(db_sale)
-        
-        # KEY ADDITION: Invalidate Prediction Cache upon success
-        invalidate_prediction_cache(user_id, sale.product_id)
-        
-        return db_sale
-    except ValueError as e:
-        db.rollback()
-        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         db.rollback()
-        raise HTTPException(status_code=500, detail="Internal Database Error.")
+        raise HTTPException(status_code=500, detail=str(e))
+        
+    try:
+        invalidate_prediction_cache(user_id, payload.product_id)
+    except:
+        pass
+        
+    return {"message": "Sale recorded successfully"}
 
 
 # --- Inventory Fetch ---
