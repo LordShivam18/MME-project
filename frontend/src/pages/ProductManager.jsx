@@ -125,13 +125,11 @@ export default function ProductManager() {
     try {
       clearMsg();
       console.log("SALE:", product_id);
-      // ACID Transaction endpoint utilizing explicit quantity_sold mappings silently without abstracting 0.01 requirement drops
       await axiosClient.post(`/api/v1/sales/`, {
         product_id: product_id,
-        quantity_sold: 1,
-        sale_price: 25.00
+        quantity_sold: 1
       });
-      setSuccessMessage("Sale logically recorded!");
+      setSuccessMessage("Sale recorded successfully");
       await fetchProducts();
     } catch (err) {
       setFormError(err.response?.data?.detail || "Internal error");

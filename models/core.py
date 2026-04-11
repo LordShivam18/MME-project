@@ -48,17 +48,10 @@ class Inventory(Base):
         CheckConstraint('quantity_on_hand >= 0', name='check_qty_on_hand_positive'),
     )
 
-class SaleTransaction(Base):
+class Sale(Base):
     __tablename__ = "sales"
-    id = Column(Integer, primary_key=True, index=True)
-    shop_id = Column(Integer, ForeignKey("users.id"), index=True)
-    product_id = Column(Integer, ForeignKey("products.id"), index=True)
+    id = Column(Integer, primary_key=True)
+    product_id = Column(Integer, ForeignKey("products.id"))
+    shop_id = Column(Integer, ForeignKey("users.id"))
     quantity_sold = Column(Integer)
-    sale_price = Column(Float)
     sale_date = Column(DateTime, default=datetime.utcnow)
-    
-    __table_args__ = (
-        CheckConstraint('quantity_sold > 0', name='check_qty_sold_positive'),
-        Index('idx_sales_shop_product_date', 'shop_id', 'product_id', text('sale_date DESC')),
-        Index('idx_sales_product_date', 'product_id', text('sale_date DESC'))
-    )

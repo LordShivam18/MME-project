@@ -28,9 +28,7 @@ class ProductResponse(ProductBase):
 # --- Sales Schemas ---
 class SalesCreate(BaseModel):
     product_id: int
-    # Prevents pushing millions of items to integer overflow standard SQL fields
-    quantity_sold: int = Field(..., gt=0, le=10000) 
-    sale_price: float = Field(..., gt=0, le=9999999.99)
+    quantity_sold: int
     sale_date: Optional[datetime] = None
 
 class SalesResponse(SalesCreate):

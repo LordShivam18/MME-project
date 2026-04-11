@@ -103,24 +103,22 @@ def read_products(request: Request, skip: int = 0, limit: int = 100, db: Session
 
 # --- Sales Entry & Inventory Updater (ACID Transaction) ---
 @router.post("/sales/")
-@limiter.limit("100/minute")
-def log_sale(request: Request, payload: schemas.SalesCreate, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+def record_sale(payload: schemas.SalesCreate, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     user_id = current_user.id if hasattr(current_user, 'id') else current_user.get("user_id")
 
-    product = db.query(models.Product).filter(
-        models.Product.id == payload.product_id,
-        models.Product.shop_id == user_id
+    product = db.query(models.Product).filter_by(
+        id=payload.product_id,
+        shop_id=user_id
     ).first()
 
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
 
-    inventory = db.query(models.Inventory).filter(
-        models.Inventory.product_id == payload.product_id,
-        models.Inventory.shop_id == user_id
-    ).with_for_update().first()
+    inventory = db.query(models.Inventory).filter_by(
+        product_id=payload.product_id,
+        shop_id=user_id
+    ).first()
 
-    # FIX: auto-create inventory if missing
     if not inventory:
         inventory = models.Inventory(
             product_id=payload.product_id,
@@ -128,34 +126,23 @@ def log_sale(request: Request, payload: schemas.SalesCreate, db: Session = Depen
             quantity_on_hand=0
         )
         db.add(inventory)
-        db.flush()
+        db.commit()
+        db.refresh(inventory)
 
-    # FIX: prevent negative stock
     if inventory.quantity_on_hand < payload.quantity_sold:
         raise HTTPException(status_code=400, detail="Not enough stock")
 
     inventory.quantity_on_hand -= payload.quantity_sold
 
-    sale = models.SaleTransaction(
+    sale = models.Sale(
         product_id=payload.product_id,
         shop_id=user_id,
-        quantity_sold=payload.quantity_sold,
-        sale_price=payload.sale_price
+        quantity_sold=payload.quantity_sold
     )
 
     db.add(sale)
-    
-    try:
-        db.commit()
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
-        
-    try:
-        invalidate_prediction_cache(user_id, payload.product_id)
-    except:
-        pass
-        
+    db.commit()
+
     return {"message": "Sale recorded successfully"}
 
 
@@ -232,7 +219,7 @@ def delete_product(product_id: int, db: Session = Depends(get_db), current_user:
 
     # Manually cascade inventory and sales dependencies internally preventing Postgres Constraint Crashes
     db.query(models.Inventory).filter_by(product_id=product_id, shop_id=user_id).delete()
-    db.query(models.SaleTransaction).filter_by(product_id=product_id, shop_id=user_id).delete()
+    db.query(models.Sale).filter_by(product_id=product_id, shop_id=user_id).delete()
     
     db.delete(product)
     db.commit()
