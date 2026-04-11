@@ -26,46 +26,39 @@ logger = logging.getLogger(__name__)
 # ---------------- LIFESPAN ----------------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    print("🚀 Startup event triggered")
+    print("🚀 STARTUP RUNNING")
     import models.core   # force model registration
     from database import Base, engine, SessionLocal
     from models.core import User
     from auth import pwd_context
 
-    try:
-        print("Connecting to database...")
-        Base.metadata.create_all(bind=engine)
-        print("Tables created successfully")
-    except Exception as e:
-        print("Database initialization failed:", str(e))
-        
+    print("Connecting to DB...")
+    Base.metadata.create_all(bind=engine)
+    
+    print("Starting seeding process...")
     db = SessionLocal()
-    try:
-        print("Seeding user started")
-        user = db.query(User).filter(User.email == "test@gmail.com").first()
 
-        if not user:
-            hashed = pwd_context.hash("Test@123456")
+    user = db.query(User).filter(User.email == "test@gmail.com").first()
 
-            new_user = User(
-                email="test@gmail.com",
-                hashed_password=hashed
-            )
+    if not user:
+        print("User not found. Creating...")
 
-            db.add(new_user)
-            db.commit()
-            db.refresh(new_user)
+        hashed = pwd_context.hash("Test@123456")
 
-            print("User created:", new_user.email)
-        else:
-            print("User already exists")
+        new_user = User(
+            email="test@gmail.com",
+            hashed_password=hashed
+        )
 
-    except Exception as e:
-        print("Seeding failed:", e)
-        traceback.print_exc()
-        db.rollback()
-    finally:
-        db.close()
+        db.add(new_user)
+        db.commit()
+        db.refresh(new_user)
+
+        print("✅ User created:", new_user.email)
+    else:
+        print("⚠️ User already exists")
+
+    db.close()
         
     yield
 
