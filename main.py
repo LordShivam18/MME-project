@@ -51,23 +51,32 @@ def startup():
         print("Connecting to database...")
         Base.metadata.create_all(bind=engine)
         print("Tables created successfully")
-        
-        print("Executing user database seed check...")
-        pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-        
-        with SessionLocal() as db:
-            user = db.query(models.core.User).filter(models.core.User.email == "test@gmail.com").first()
-            if not user:
-                hashed_pw = pwd_context.hash("123456")
-                new_user = models.core.User(email="test@gmail.com", hashed_password=hashed_pw)
-                db.add(new_user)
-                db.commit()
-                print("Test user dynamically seeded securely")
-            else:
-                print("Test user already exists.")
-                
     except Exception as e:
         print("Database initialization failed:", str(e))
+        return
+
+    db = SessionLocal()
+    try:
+        print("Seeding user started")
+        pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+        
+        user = db.query(models.core.User).filter(models.core.User.email == "test@gmail.com").first()
+        
+        if not user:
+            hashed_pw = pwd_context.hash("123456")
+            new_user = models.core.User(email="test@gmail.com", hashed_password=hashed_pw)
+            db.add(new_user)
+            db.commit()
+            db.refresh(new_user)
+            print("User created successfully")
+        else:
+            print("User already exists")
+            
+    except Exception as e:
+        db.rollback()
+        print("Seeding error:", e)
+    finally:
+        db.close()
 
 # ---------------- REQUEST LOGGER ----------------
 @app.middleware("http")
