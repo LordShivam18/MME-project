@@ -2,6 +2,10 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 from typing import List
 import logging
+import os
+from datetime import datetime, timedelta
+from jose import jwt
+from passlib.context import CryptContext
 
 from database import get_db
 from models import core as models
@@ -14,13 +18,38 @@ from fastapi.security import OAuth2PasswordRequestForm
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+SECRET_KEY = os.getenv("SECRET_KEY", "super_secret_dev_key")
+
 # --- Auth Endpoints ---
 @router.post("/auth/token")
 @limiter.limit("10/minute")
-def login(request: Request, form_data: OAuth2PasswordRequestForm = Depends()):
-    if form_data.password == "password":
-        return {"access_token": "valid_token_123", "token_type": "bearer"}
-    raise HTTPException(status_code=401, detail="Incorrect credentials")
+def login(request: Request, form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+    logger.info("User lookup executed")
+    user = db.query(models.User).filter(models.User.email == form_data.username).first()
+    
+    if not user:
+        logger.info("User not found")
+        raise HTTPException(status_code=401, detail="Incorrect credentials")
+        
+    logger.info("User found")
+    
+    if not pwd_context.verify(form_data.password, user.hashed_password):
+        logger.warning("Password failed")
+        raise HTTPException(status_code=401, detail="Incorrect credentials")
+        
+    logger.info("Password verified")
+    
+    # Generate actual JWT
+    access_token = jwt.encode(
+        {"sub": user.email, "user_id": user.id, "exp": datetime.utcnow() + timedelta(days=1)}, 
+        SECRET_KEY, 
+        algorithm="HS256"
+    )
+    
+    logger.info("JWT token generated")
+    
+    return {"access_token": access_token, "token_type": "bearer"}
 
 @router.get("/auth/me")
 @limiter.limit("100/minute")

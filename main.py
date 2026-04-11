@@ -44,12 +44,28 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 @app.on_event("startup")
 def startup():
     import models.core   # force model registration
-    from database import Base, engine
+    from database import Base, engine, SessionLocal
+    from passlib.context import CryptContext
 
     try:
         print("Connecting to database...")
         Base.metadata.create_all(bind=engine)
         print("Tables created successfully")
+        
+        print("Executing user database seed check...")
+        pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+        
+        with SessionLocal() as db:
+            user = db.query(models.core.User).filter(models.core.User.email == "test@gmail.com").first()
+            if not user:
+                hashed_pw = pwd_context.hash("123456")
+                new_user = models.core.User(email="test@gmail.com", hashed_password=hashed_pw)
+                db.add(new_user)
+                db.commit()
+                print("Test user dynamically seeded securely")
+            else:
+                print("Test user already exists.")
+                
     except Exception as e:
         print("Database initialization failed:", str(e))
 
