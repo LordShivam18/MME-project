@@ -1,6 +1,8 @@
 import logging
 import time
 import os
+import traceback
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -21,10 +23,57 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# ---------------- LIFESPAN ----------------
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    print("🚀 Startup event triggered")
+    import models.core   # force model registration
+    from database import Base, engine, SessionLocal
+    from models.core import User
+    from auth import preprocess_password, pwd_context
+
+    try:
+        print("Connecting to database...")
+        Base.metadata.create_all(bind=engine)
+        print("Tables created successfully")
+    except Exception as e:
+        print("Database initialization failed:", str(e))
+        
+    db = SessionLocal()
+    try:
+        print("Seeding user started")
+        user = db.query(User).filter(User.email == "test@gmail.com").first()
+
+        if not user:
+            hashed = pwd_context.hash(preprocess_password("Test@123456"))
+
+            new_user = User(
+                email="test@gmail.com",
+                hashed_password=hashed
+            )
+
+            db.add(new_user)
+            db.commit()
+            db.refresh(new_user)
+
+            print("User created:", new_user.email)
+        else:
+            print("User already exists")
+
+    except Exception as e:
+        print("Seeding failed:", e)
+        traceback.print_exc()
+        db.rollback()
+    finally:
+        db.close()
+        
+    yield
+
 # ---------------- APP INIT ----------------
 app = FastAPI(
     title="Inventory & Demand Prediction API",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan
 )
 
 # ---------------- CORS ----------------
@@ -39,51 +88,6 @@ app.add_middleware(
 # ---------------- RATE LIMITER ----------------
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
-
-# ---------------- STARTUP CHECK ----------------
-@app.on_event("startup")
-def startup():
-    import models.core   # force model registration
-    from database import Base, engine, SessionLocal
-    from passlib.context import CryptContext
-
-    try:
-        print("Connecting to database...")
-        Base.metadata.create_all(bind=engine)
-        print("Tables created successfully")
-    except Exception as e:
-        print("Database initialization failed:", str(e))
-        return
-
-    db = SessionLocal()
-    try:
-        print("Seeding user started")
-        
-        user = db.query(models.core.User).filter(models.core.User.email == "test@gmail.com").first()
-        
-        if not user:
-            from auth import preprocess_password, pwd_context
-            
-            processed = preprocess_password("Test@123456")
-            hashed_password = pwd_context.hash(processed)
-            
-            new_user = models.core.User(
-                email="test@gmail.com",
-                hashed_password=hashed_password
-            )
-            
-            db.add(new_user)
-            db.commit()
-            db.refresh(new_user)
-            print("User created:", new_user.email)
-        else:
-            print("User already exists")
-            
-    except Exception as e:
-        print("Seeding failed:", e)
-        db.rollback()
-    finally:
-        db.close()
 
 # ---------------- REQUEST LOGGER ----------------
 @app.middleware("http")
