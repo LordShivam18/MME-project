@@ -20,8 +20,13 @@ export default function Login({ onLogin }) {
       formData.append('password', password);
       
       const response = await axiosClient.post('/api/v1/auth/token', formData);
-      localStorage.setItem('token', response.data.access_token);
-      onLogin(); // Triggers the App route protection wrapper to flip state
+      console.log("Login response:", response.data);
+      
+      // Axios automatically halts and throws on non-200 errors. Reaching this block guarantees success.
+      if (response.status === 200) {
+        localStorage.setItem("token", response.data.access_token);
+        window.location.href = "/dashboard";
+      }
     } catch (err) {
       setError(err.response?.data?.detail || "System unable to authenticate. Try again.");
     } finally {
