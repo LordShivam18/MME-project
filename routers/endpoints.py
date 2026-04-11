@@ -112,11 +112,11 @@ def log_sale(request: Request, sale: schemas.SalesCreate, db: Session = Depends(
         ).with_for_update().first()
         
         if not inventory:
-            raise ValueError("Inventory not found.")
-        if inventory.quantity_on_hand < sale.quantity_sold:
-            raise ValueError("Insufficient inventory on hand.")
+            inventory = models.Inventory(shop_id=user_id, product_id=sale.product_id, quantity_on_hand=0)
+            db.add(inventory)
+            db.flush() # ensure ID executes
             
-        inventory.quantity_on_hand -= sale.quantity_sold
+        inventory.quantity_on_hand = max(0, inventory.quantity_on_hand - sale.quantity_sold)
         db.commit()
         db.refresh(db_sale)
         
@@ -135,13 +135,14 @@ def log_sale(request: Request, sale: schemas.SalesCreate, db: Session = Depends(
 # --- Inventory Fetch ---
 @router.get("/inventory/summary", response_model=List[schemas.InventorySummaryResponse])
 @limiter.limit("50/minute")
-def get_inventory_summary(request: Request, shop_id: int, limit: int = 100, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+def get_inventory_summary(request: Request, limit: int = 100, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    user_id = current_user.id if hasattr(current_user, 'id') else current_user.get("user_id")
     # Highly optimized single DB join avoiding Promise.all API abuse
     joined_data = db.query(models.Product, models.Inventory).join(
         models.Inventory, models.Product.id == models.Inventory.product_id
     ).filter(
-        models.Product.shop_id == shop_id,
-        models.Inventory.shop_id == shop_id
+        models.Product.shop_id == user_id,
+        models.Inventory.shop_id == user_id
     ).limit(limit).all()
     
     summary = []
@@ -159,22 +160,64 @@ def get_inventory_summary(request: Request, shop_id: int, limit: int = 100, db: 
 
 @router.get("/inventory/{product_id}", response_model=schemas.InventoryResponse)
 @limiter.limit("100/minute")
-def get_inventory(request: Request, shop_id: int, product_id: int, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+def get_inventory(request: Request, product_id: int, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    user_id = current_user.id if hasattr(current_user, 'id') else current_user.get("user_id")
     inventory = db.query(models.Inventory).filter(
-        models.Inventory.shop_id == shop_id,
+        models.Inventory.shop_id == user_id,
         models.Inventory.product_id == product_id
     ).first()
     if not inventory:
         raise HTTPException(status_code=404, detail="Not found")
     return inventory
 
+@router.put("/products/{product_id}")
+def update_product(product_id: int, updated: schemas.ProductCreate, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    user_id = current_user.id if hasattr(current_user, 'id') else current_user.get("user_id")
+    product = db.query(models.Product).filter(
+        models.Product.id == product_id,
+        models.Product.shop_id == user_id
+    ).first()
+
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+
+    try:
+        # exclude_unset permits purely partial parameter application seamlessly.
+        for key, value in updated.model_dump(exclude_unset=True).items():
+            setattr(product, key, value)
+        db.commit()
+        db.refresh(product)
+        return product
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=400, detail="Product with this SKU already exists")
+
+@router.delete("/products/{product_id}")
+def delete_product(product_id: int, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    user_id = current_user.id if hasattr(current_user, 'id') else current_user.get("user_id")
+    product = db.query(models.Product).filter(
+        models.Product.id == product_id,
+        models.Product.shop_id == user_id
+    ).first()
+
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+
+    # Manually cascade inventory and sales dependencies internally preventing Postgres Constraint Crashes
+    db.query(models.Inventory).filter_by(product_id=product_id, shop_id=user_id).delete()
+    db.query(models.SaleTransaction).filter_by(product_id=product_id, shop_id=user_id).delete()
+    
+    db.delete(product)
+    db.commit()
+    return {"message": "Product deleted"}
 
 # --- Read-Only Prediction Output (TIGHTLY LIMITED) ---
 @router.get("/predictions/{product_id}", response_model=schemas.PredictionResponse)
 @limiter.limit("20/minute") # Strict 20 req/min specifically to prevent computational spam
-def get_prediction_insights(request: Request, shop_id: int, product_id: int, window_size_days: int = 14, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+def get_prediction_insights(request: Request, product_id: int, window_size_days: int = 14, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    user_id = current_user.id if hasattr(current_user, 'id') else current_user.get("user_id")
     try:
-        prediction = get_product_prediction(db, shop_id=shop_id, product_id=product_id, window_size=window_size_days)
+        prediction = get_product_prediction(db, shop_id=user_id, product_id=product_id, window_size=window_size_days)
         return prediction
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
