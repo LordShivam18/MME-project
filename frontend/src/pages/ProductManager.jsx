@@ -67,6 +67,7 @@ export default function ProductManager() {
       };
       
       if (editingProductId) {
+        console.log("UPDATE:", editingProductId);
         await axiosClient.put(`/api/v1/products/${editingProductId}`, payload);
         setSuccessMessage("Product updated successfully");
         setEditingProductId(null);
@@ -110,6 +111,7 @@ export default function ProductManager() {
     try {
       clearMsg();
       setIsLoading(true);
+      console.log("DELETE:", `/api/v1/products/${id}`);
       await axiosClient.delete(`/api/v1/products/${id}`);
       setSuccessMessage("Product deleted successfully");
       await fetchProducts();
@@ -122,6 +124,7 @@ export default function ProductManager() {
   const handleSale = async (product_id) => {
     try {
       clearMsg();
+      console.log("SALE:", product_id);
       // ACID Transaction endpoint utilizing explicit quantity_sold mappings silently without abstracting 0.01 requirement drops
       await axiosClient.post(`/api/v1/sales/`, {
         product_id: product_id,
