@@ -143,10 +143,33 @@ def record_sale(payload: schemas.SalesCreate, db: Session = Depends(get_db), cur
     db.add(sale)
     db.commit()
 
-    return {"message": "Sale recorded successfully"}
+    return {"message": "Sale recorded!", "stock_left": inventory.quantity_on_hand}
 
 
-# --- Inventory Fetch ---
+# --- Inventory Fetch & Modification ---
+@router.post("/inventory/add-stock")
+def add_stock(payload: schemas.AddStockRequest, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    user_id = current_user.id if hasattr(current_user, 'id') else current_user.get("user_id")
+    
+    inventory = db.query(models.Inventory).filter_by(
+        product_id=payload.product_id,
+        shop_id=user_id
+    ).first()
+
+    if not inventory:
+        inventory = models.Inventory(
+            product_id=payload.product_id,
+            shop_id=user_id,
+            quantity_on_hand=payload.quantity
+        )
+        db.add(inventory)
+    else:
+        inventory.quantity_on_hand += payload.quantity
+
+    db.commit()
+    db.refresh(inventory)
+    return {"message": "Stock updated successfully", "quantity_on_hand": inventory.quantity_on_hand}
+
 @router.get("/inventory/summary", response_model=List[schemas.InventorySummaryResponse])
 @limiter.limit("50/minute")
 def get_inventory_summary(request: Request, limit: int = 100, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):

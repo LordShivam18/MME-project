@@ -125,14 +125,38 @@ export default function ProductManager() {
     try {
       clearMsg();
       console.log("SALE:", product_id);
-      await axiosClient.post(`/api/v1/sales/`, {
+      const res = await axiosClient.post(`/api/v1/sales/`, {
         product_id: product_id,
         quantity_sold: 1
       });
-      setSuccessMessage("Sale recorded successfully");
+      window.alert(`Sale recorded! Stock left: ${res.data.stock_left}`);
       await fetchProducts();
     } catch (err) {
       setFormError(err.response?.data?.detail || "Internal error");
+    }
+  };
+
+  const handleAddStock = async (product_id) => {
+    const qtyStr = window.prompt("Enter quantity to add:");
+    if (!qtyStr) return;
+    const quantity = parseInt(qtyStr, 10);
+    if (isNaN(quantity) || quantity <= 0) {
+      setFormError("Invalid quantity");
+      return;
+    }
+
+    try {
+      clearMsg();
+      setIsLoading(true);
+      const res = await axiosClient.post(`/api/v1/inventory/add-stock`, {
+         product_id: product_id,
+         quantity: quantity
+      });
+      window.alert(`Stock updated! New quantity: ${res.data.quantity_on_hand}`);
+      await fetchProducts();
+    } catch (err) {
+      setFormError(err.response?.data?.detail || "Internal error");
+      setIsLoading(false);
     }
   };
 
@@ -196,6 +220,7 @@ export default function ProductManager() {
                           <button onClick={() => handleEditClick(p)} style={{ padding: '0.3rem 0.6rem', background: '#ffc107', borderRadius: '4px', border: 'none', cursor: 'pointer' }}>Edit</button>
                           <button onClick={() => handleDelete(p.id)} style={{ padding: '0.3rem 0.6rem', background: '#dc3545', color: 'white', borderRadius: '4px', border: 'none', cursor: 'pointer' }}>Delete</button>
                           <button onClick={() => handleSale(p.id)} style={{ padding: '0.3rem 0.6rem', background: '#0dcaf0', borderRadius: '4px', border: 'none', cursor: 'pointer' }}>Record Sale</button>
+                          <button onClick={() => handleAddStock(p.id)} style={{ padding: '0.3rem 0.6rem', background: '#28a745', color: 'white', borderRadius: '4px', border: 'none', cursor: 'pointer' }}>Add Stock</button>
                         </td>
                       </tr>
                     ))}

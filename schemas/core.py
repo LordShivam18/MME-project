@@ -40,6 +40,10 @@ class SalesResponse(SalesCreate):
         from_attributes = True
 
 # --- Inventory Schemas ---
+class AddStockRequest(BaseModel):
+    product_id: int
+    quantity: int
+
 class InventoryResponse(BaseModel):
     id: int
     shop_id: int
