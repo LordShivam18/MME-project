@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 # We use TTLCache to avoid Redis dependency for the MVP while still honoring TTL parameters
 from cachetools import TTLCache
 
-from models.core import Product, Inventory, SaleTransaction
+from models.core import Product, Inventory, Sale
 from schemas.core import PredictionResponse
 from logic_engine import DataSanitizer, DemandPredictor, InventoryLogic
 
@@ -45,11 +45,11 @@ def get_product_prediction(db: Session, shop_id: int, product_id: int, window_si
         raise ValueError("Product or Inventory not found.")
 
     lookback_date = datetime.utcnow() - timedelta(days=window_size)
-    sales = db.query(SaleTransaction).filter(
-        SaleTransaction.shop_id == shop_id,
-        SaleTransaction.product_id == product_id,
-        SaleTransaction.sale_date >= lookback_date
-    ).order_by(SaleTransaction.sale_date.asc()).all()
+    sales = db.query(Sale).filter(
+        Sale.shop_id == shop_id,
+        Sale.product_id == product_id,
+        Sale.sale_date >= lookback_date
+    ).order_by(Sale.sale_date.asc()).all()
     
     raw_sales_array = [s.quantity_sold for s in sales] 
     cleaned_sales = DataSanitizer.validate_and_clean(raw_sales_array)
