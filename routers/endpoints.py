@@ -11,7 +11,7 @@ from passlib.context import CryptContext
 from database import get_db
 from models import core as models
 from schemas import core as schemas
-from services.prediction_service import get_product_prediction, invalidate_prediction_cache
+# from services.prediction_service import get_product_prediction, invalidate_prediction_cache
 from limiter import limiter
 from auth import get_current_user
 from fastapi.security import OAuth2PasswordRequestForm
@@ -231,7 +231,8 @@ def delete_product(product_id: int, db: Session = Depends(get_db), current_user:
 def get_prediction_insights(request: Request, product_id: int, window_size_days: int = 14, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     user_id = current_user.id if hasattr(current_user, 'id') else current_user.get("user_id")
     try:
-        prediction = get_product_prediction(db, shop_id=user_id, product_id=product_id, window_size=window_size_days)
-        return prediction
+        # prediction = get_product_prediction(db, shop_id=user_id, product_id=product_id, window_size=window_size_days)
+        # return prediction
+        pass
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

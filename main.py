@@ -2,6 +2,9 @@ import logging
 import time
 import os
 import traceback
+
+print("App starting...")
+
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -12,6 +15,9 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
 from database import engine
+
+print("Imports successful")
+
 from routers import endpoints
 from limiter import limiter
 
@@ -34,6 +40,7 @@ async def lifespan(app: FastAPI):
 
     print("Connecting to DB...")
     Base.metadata.create_all(bind=engine)
+    print("DB connection successful")
     
     print("Starting seeding process...")
     db = SessionLocal()
