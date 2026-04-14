@@ -44,20 +44,39 @@ def get_product_prediction(db: Session, shop_id: int, product_id: int, window_si
         logger.error(f"Prediction aborted: Item not found (Shop {shop_id}, Product {product_id})")
         raise ValueError("Product or Inventory not found.")
 
-    lookback_date = datetime.utcnow() - timedelta(days=window_size)
+    cutoff = datetime.utcnow() - timedelta(days=14)
     sales = db.query(Sale).filter(
         Sale.shop_id == shop_id,
         Sale.product_id == product_id,
-        Sale.sale_date >= lookback_date
+        Sale.sale_date >= cutoff
     ).order_by(Sale.sale_date.asc()).all()
     
     if not sales:
-        return {
-            "prediction": "Not enough data",
-            "recommended_stock": 0
+        result = {
+            "prediction": "No data",
+            "estimated_daily_sales": 0.0,
+            "target_safety_buffer": 0,
+            "reorder_now": False
         }
+        prediction_cache[cache_key] = result
+        return result
 
-    return {
-        "prediction": "Increase stock",
-        "recommended_stock": 10
+    total_sold = sum(s.quantity_sold for s in sales)
+
+    window_days = 14
+    avg_daily_sales = total_sold / window_days
+
+    trend_factor = 1.2 if total_sold > 10 else 1
+    forecast = avg_daily_sales * trend_factor
+
+    safety_stock = forecast * 2
+
+    result = {
+        "prediction": "Increase stock" if forecast > 0 else "Stable",
+        "estimated_daily_sales": round(forecast, 2),
+        "target_safety_buffer": int(safety_stock),
+        "reorder_now": inventory.quantity_on_hand < safety_stock
     }
+    
+    prediction_cache[cache_key] = result
+    return result

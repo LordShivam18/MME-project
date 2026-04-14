@@ -3,8 +3,6 @@ import time
 import os
 import traceback
 
-print("App starting...")
-
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -16,9 +14,6 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
 from database import engine
-
-print("Imports successful")
-
 from routers import endpoints
 from limiter import limiter
 
@@ -33,23 +28,23 @@ logger = logging.getLogger(__name__)
 # ---------------- LIFESPAN ----------------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    print("🚀 STARTUP RUNNING")
+    logger.info("🚀 STARTUP RUNNING")
     import models.core   # force model registration
     from database import Base, engine, SessionLocal
     from models.core import User
     from auth import pwd_context
 
-    print("Connecting to DB...")
+    logger.info("Connecting to DB...")
     Base.metadata.create_all(bind=engine)
-    print("DB connection successful")
+    logger.info("DB connection successful")
     
-    print("Starting seeding process...")
+    logger.info("Starting seeding process...")
     db = SessionLocal()
 
     user = db.query(User).filter(User.email == "test@gmail.com").first()
 
     if not user:
-        print("User not found. Creating...")
+        logger.info("User not found. Creating...")
 
         hashed = pwd_context.hash("Test@123456")
 
@@ -62,9 +57,9 @@ async def lifespan(app: FastAPI):
         db.commit()
         db.refresh(new_user)
 
-        print("✅ User created:", new_user.email)
+        logger.info("✅ User created: %s", new_user.email)
     else:
-        print("⚠️ User already exists")
+        logger.info("⚠️ User already exists")
 
     db.close()
         
@@ -79,8 +74,7 @@ app = FastAPI(
 
 ALLOWED_ORIGINS = [
     "http://localhost:5173",
-    "http://127.0.0.1:5173",
-    "https://your-frontend.vercel.app"
+    "https://your-vercel-app.vercel.app"
 ]
 
 # ---------------- CORS ----------------

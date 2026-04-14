@@ -28,6 +28,22 @@ export default function Inventory() {
     fetchSummary();
   }, []);
 
+  const handleAddStock = async (product_id, recommended_qty) => {
+    const qtyStr = window.prompt("Enter quantity to add:", recommended_qty || "");
+    if (!qtyStr) return;
+    const quantity = parseInt(qtyStr, 10);
+    if (isNaN(quantity) || quantity <= 0) return;
+    
+    try {
+      setIsLoading(true);
+      await axiosClient.post(`/api/v1/inventory/add-stock`, { product_id, quantity });
+      fetchSummary();
+    } catch(err) {
+      setError("Failed to add stock");
+      setIsLoading(false);
+    }
+  };
+
   return (
     <div style={{ fontFamily: 'sans-serif', maxWidth: '1200px', margin: '0 auto', padding: '1rem' }}>
       <Navigation />
@@ -48,11 +64,15 @@ export default function Inventory() {
           const isLowStock = qty <= reorderLimit;
 
           return (
-            <div key={item.product_id} style={{ border: `2px solid ${isLowStock ? '#ffcccc' : '#eee'}`, borderRadius: '8px', padding: '1.5rem', display: 'flex', justifyContent: 'space-between', backgroundColor: '#fff' }}>
+            <div key={item.product_id} className="card" style={{ border: `2px solid ${isLowStock ? '#ffcccc' : '#eee'}`, borderRadius: '12px', padding: '16px', display: 'flex', justifyContent: 'space-between', backgroundColor: '#fff', boxShadow: '0 4px 12px rgba(0,0,0,0.2)', transition: '0.2s', marginBottom: '1rem' }}>
               <div>
                 <h3 style={{ margin: '0' }}>{item.name} <span style={{ fontSize: '0.8rem', color: '#888' }}>({item.sku})</span></h3>
                 <p style={{ margin: '0.5rem 0', fontWeight: 'bold', color: isLowStock ? 'red' : 'green' }}>
-                  Current Stock: {qty} {isLowStock && "⚠️ (REORDER NOW)"}
+                  Current Stock: {qty} {isLowStock && (
+                    <span style={{ background: "red", color: "white", padding: "4px", borderRadius: "4px", marginLeft: "0.5rem", fontSize: "0.8rem" }}>
+                      LOW STOCK
+                    </span>
+                  )}
                 </p>
                 <div style={{ fontSize: '0.9rem', color: '#555', marginTop: '1rem' }}>
                    Selling Price: {formatCurrency(item.selling_price)} | Category: {item.category}
@@ -60,12 +80,15 @@ export default function Inventory() {
               </div>
               
               <div style={{ width: '350px' }}>
-                 <PredictionWidget shopId={shopId} productId={item.product_id} />
+                 <PredictionWidget shopId={shopId} productId={item.product_id} onReorder={handleAddStock} />
               </div>
             </div>
           );
         })}
       </div>
+      <style>{`
+        .card:hover { transform: scale(1.02); }
+      `}</style>
     </div>
   );
 }

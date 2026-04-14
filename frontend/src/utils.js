@@ -1,3 +1,6 @@
 export function formatCurrency(value) {
-    return "₹" + Number(value || 0).toFixed(2);
+  return new Intl.NumberFormat('en-IN', {
+    style: 'currency',
+    currency: 'INR'
+  }).format(value || 0);
 }

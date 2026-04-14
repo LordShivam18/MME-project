@@ -129,7 +129,7 @@ export default function ProductManager() {
         product_id: product_id,
         quantity_sold: 1
       });
-      window.alert(`Sale recorded! Stock left: ${res.data.stock_left}`);
+      setSuccessMessage(`Sale recorded! Stock left: ${res.data.stock_left}`);
       await fetchProducts();
     } catch (err) {
       setFormError(err.response?.data?.detail || "Internal error");
@@ -152,7 +152,7 @@ export default function ProductManager() {
          product_id: product_id,
          quantity: quantity
       });
-      window.alert(`Stock updated! New quantity: ${res.data.quantity_on_hand}`);
+      setSuccessMessage(`Stock updated! New quantity: ${res.data.quantity_on_hand}`);
       await fetchProducts();
     } catch (err) {
       setFormError(err.response?.data?.detail || "Internal error");

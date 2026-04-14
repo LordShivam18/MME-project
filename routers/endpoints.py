@@ -64,8 +64,8 @@ def create_product(request: Request, product: schemas.ProductCreate, db: Session
     # NOTE: Extrapolating into an object fallback to strictly enforce requested assignment logic without triggering Dictionary assignment aborts locally in production overrides.
     user_id = current_user.id if hasattr(current_user, 'id') else current_user.get("user_id")
     
-    print("Creating product for user:", user_id)
-    print("Product data:", product.model_dump())
+    logger.info("Creating product for user: %s", user_id)
+    logger.info("Product data: %s", product.model_dump())
     
     sku_exists = db.query(models.Product).filter(
         models.Product.sku == product.sku,
@@ -90,7 +90,7 @@ def create_product(request: Request, product: schemas.ProductCreate, db: Session
         return new_product
     except Exception as e:
         db.rollback()
-        print("DB ERROR:", e)
+        logger.error("DB ERROR: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/products/", response_model=List[schemas.ProductResponse])
@@ -106,8 +106,8 @@ def read_products(request: Request, skip: int = 0, limit: int = 100, db: Session
 def record_sale(payload: schemas.SalesCreate, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     try:
         user_id = current_user.id if hasattr(current_user, 'id') else current_user.get("user_id")
-        print("USER ID:", user_id)
-        print("PRODUCT ID:", payload.product_id)
+        logger.info("USER ID: %s", user_id)
+        logger.info("PRODUCT ID: %s", payload.product_id)
 
         inventory = db.query(models.Inventory).filter(
             models.Inventory.product_id == payload.product_id,
@@ -142,8 +142,25 @@ def record_sale(payload: schemas.SalesCreate, db: Session = Depends(get_db), cur
         raise
     except Exception as e:
         db.rollback()
-        print("SALE ERROR:", str(e))
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/sales/history/{product_id}")
+def get_sales_history(product_id: int, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    user_id = current_user.id if hasattr(current_user, 'id') else current_user.get("user_id")
+    cutoff = datetime.utcnow() - timedelta(days=7)
+    
+    sales = db.query(models.Sale).filter(
+        models.Sale.product_id == product_id,
+        models.Sale.shop_id == user_id,
+        models.Sale.sale_date >= cutoff
+    ).all()
+
+    daily = {}
+    for s in sales:
+        date = s.sale_date.strftime("%Y-%m-%d")
+        daily[date] = daily.get(date, 0) + s.quantity_sold
+
+    return daily
 
 
 # --- Inventory Fetch & Modification ---
@@ -257,5 +274,5 @@ def get_prediction_insights(request: Request, product_id: int, window_size_days:
         result = get_product_prediction(db, user_id, product_id, window_size_days)
         return result
     except Exception as e:
-        print("PREDICTION ERROR:", str(e))
+        logger.error("PREDICTION ERROR: %s", str(e))
         raise HTTPException(status_code=500, detail=str(e))
