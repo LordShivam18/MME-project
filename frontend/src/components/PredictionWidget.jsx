@@ -37,8 +37,16 @@ export default function PredictionWidget({ shopId, productId }) {
     <div style={{ padding: '1rem', border: '1px solid #ccc', borderRadius: '8px', background: isHealthy ? '#e7f9eb' : '#fff3cd' }}>
       <h4 style={{ margin: '0 0 0.5rem 0' }}>Demand Logic Engine</h4>
       <p style={{ margin: '0.2rem 0' }}><strong>Action:</strong> <span style={{ color: isHealthy ? 'green' : 'red' }}>{prediction.action_required}</span></p>
-      <p style={{ margin: '0.2rem 0' }}>Est. Daily Sales: {prediction.predicted_daily_demand.toFixed(2)}</p>
-      <p style={{ margin: '0.2rem 0' }}>Target Safety Buffer: {prediction.safety_stock_required.toFixed(0)}</p>
+      <p style={{ margin: '0.2rem 0' }}>Est. Daily Sales: {
+        prediction.predicted_daily_demand
+          ? prediction.predicted_daily_demand.toFixed(2)
+          : "0.00"
+      }</p>
+      <p style={{ margin: '0.2rem 0' }}>Target Safety Buffer: {
+        prediction.safety_stock_required
+          ? prediction.safety_stock_required.toFixed(0)
+          : "0"
+      }</p>
     </div>
   );
 }

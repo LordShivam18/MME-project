@@ -3,6 +3,7 @@ import axiosClient from '../api/axiosClient';
 import Navigation from '../components/Navigation';
 import PredictionWidget from '../components/PredictionWidget';
 import { LoadingSpinner, ErrorState, EmptyState } from '../components/StateSpinners';
+import { formatCurrency } from '../utils';
 
 export default function Inventory() {
   const [summaryData, setSummaryData] = useState([]);
@@ -54,7 +55,7 @@ export default function Inventory() {
                   Current Stock: {qty} {isLowStock && "⚠️ (REORDER NOW)"}
                 </p>
                 <div style={{ fontSize: '0.9rem', color: '#555', marginTop: '1rem' }}>
-                   Selling Price: ${item.selling_price?.toFixed(2)} | Category: {item.category}
+                   Selling Price: {formatCurrency(item.selling_price)} | Category: {item.category}
                 </div>
               </div>
               
