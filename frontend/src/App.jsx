@@ -21,7 +21,7 @@ function App() {
       }
       try {
         // Ping explicit backend Auth route to cryptographically verify token
-        await axiosClient.get('/api/v1/auth/me');
+        await axiosClient.get('/api/v1/me');
         setIsAuthenticated(true);
       } catch (error) {
         // If it throws 401, axiosClient interceptor automatically wipes it

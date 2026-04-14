@@ -23,7 +23,7 @@ from auth import pwd_context
 SECRET_KEY = os.getenv("SECRET_KEY", "super_secret_dev_key")
 
 # --- Auth Endpoints ---
-@router.post("/auth/token")
+@router.post("/login")
 @limiter.limit("10/minute")
 def login(request: Request, form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     logger.info("User lookup executed")
@@ -52,7 +52,7 @@ def login(request: Request, form_data: OAuth2PasswordRequestForm = Depends(), db
     
     return {"access_token": access_token, "token_type": "bearer"}
 
-@router.get("/auth/me")
+@router.get("/me")
 @limiter.limit("100/minute")
 def validate_token(request: Request, current_user: dict = Depends(get_current_user)):
     return {"status": "ok", "user": current_user}

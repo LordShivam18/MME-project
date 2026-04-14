@@ -19,7 +19,7 @@ export default function Login({ onLogin }) {
       formData.append('username', email);
       formData.append('password', password);
       
-      const response = await axiosClient.post('/api/v1/auth/token', formData);
+      const response = await axiosClient.post('/api/v1/login', formData);
       console.log("Login response:", response.data);
       
       // Axios automatically halts and throws on non-200 errors. Reaching this block guarantees success.

@@ -11,7 +11,7 @@ export default function Dashboard() {
   useEffect(() => {
     const fetchMe = async () => {
       try {
-        const res = await axiosClient.get('/api/v1/auth/me');
+        const res = await axiosClient.get('/api/v1/me');
         setUser(res.data.user);
       } catch (err) {
         setError("Unable to load user session.");
