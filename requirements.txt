@@ -10,3 +10,5 @@ slowapi==0.1.9
 cachetools==5.3.3
 python-multipart==0.0.9
 gunicorn==21.2.0
+pandas
+numpy
