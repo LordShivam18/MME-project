@@ -104,46 +104,46 @@ def read_products(request: Request, skip: int = 0, limit: int = 100, db: Session
 # --- Sales Entry & Inventory Updater (ACID Transaction) ---
 @router.post("/sales/")
 def record_sale(payload: schemas.SalesCreate, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    user_id = current_user.id if hasattr(current_user, 'id') else current_user.get("user_id")
+    try:
+        user_id = current_user.id if hasattr(current_user, 'id') else current_user.get("user_id")
+        print("USER ID:", user_id)
+        print("PRODUCT ID:", payload.product_id)
 
-    product = db.query(models.Product).filter_by(
-        id=payload.product_id,
-        shop_id=user_id
-    ).first()
+        inventory = db.query(models.Inventory).filter(
+            models.Inventory.product_id == payload.product_id,
+            models.Inventory.shop_id == user_id
+        ).with_for_update().first()
 
-    if not product:
-        raise HTTPException(status_code=404, detail="Product not found")
+        if not inventory:
+            raise HTTPException(status_code=404, detail="Inventory not found")
 
-    inventory = db.query(models.Inventory).filter_by(
-        product_id=payload.product_id,
-        shop_id=user_id
-    ).first()
+        if inventory.quantity_on_hand < payload.quantity_sold:
+            raise HTTPException(status_code=400, detail="Not enough stock")
 
-    if not inventory:
-        inventory = models.Inventory(
+        inventory.quantity_on_hand -= payload.quantity_sold
+
+        sale = models.Sale(
             product_id=payload.product_id,
             shop_id=user_id,
-            quantity_on_hand=0
+            quantity_sold=payload.quantity_sold
         )
-        db.add(inventory)
+
+        db.add(sale)
         db.commit()
         db.refresh(inventory)
 
-    if inventory.quantity_on_hand < payload.quantity_sold:
-        raise HTTPException(status_code=400, detail="Not enough stock")
+        return {
+            "message": "Sale recorded!",
+            "stock_left": inventory.quantity_on_hand
+        }
 
-    inventory.quantity_on_hand -= payload.quantity_sold
-
-    sale = models.Sale(
-        product_id=payload.product_id,
-        shop_id=user_id,
-        quantity_sold=payload.quantity_sold
-    )
-
-    db.add(sale)
-    db.commit()
-
-    return {"message": "Sale recorded!", "stock_left": inventory.quantity_on_hand}
+    except HTTPException:
+        # Re-raise intended 404 or 400 responses so they don't get trapped as 500s
+        raise
+    except Exception as e:
+        db.rollback()
+        print("SALE ERROR:", str(e))
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # --- Inventory Fetch & Modification ---
