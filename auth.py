@@ -93,7 +93,7 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    return {"user_id": user.id, "email": user.email, "organization_id": user.organization_id, "role": "shop_owner"}
+    return {"user_id": user.id, "email": user.email, "organization_id": user.organization_id, "role": user.role or "admin"}
 
 
 # ---------------- RATE LIMIT KEY ----------------

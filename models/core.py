@@ -24,6 +24,7 @@ class User(Base):
     hashed_password = Column(String, nullable=False)
     hashed_refresh_token = Column(String, nullable=True)
     organization_id = Column(Integer, ForeignKey("organizations.id"), index=True, nullable=True)
+    role = Column(String, default="admin", nullable=False, server_default="admin")
     created_at = Column(DateTime, default=datetime.utcnow)
 
     # Relationships

@@ -1,11 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, Query
 from sqlalchemy.exc import IntegrityError
 from typing import List
 import logging
 import os
 from datetime import datetime, timedelta
 from pydantic import BaseModel
+from functools import wraps
 
 from database import get_db
 from models import core as models
@@ -23,14 +24,47 @@ router = APIRouter()
 class RefreshTokenRequest(BaseModel):
     refresh_token: str
 
+class InviteRequest(BaseModel):
+    email: str
+    role: str = "staff"
 
-# --- Helper: extract org_id safely ---
+
+# ============================================================
+# 🔴 CENTRALIZED ORG FILTER (Task 1)
+# ============================================================
+def org_filter(query: Query, model, current_user: dict) -> Query:
+    """
+    Centralized organization filter. ALWAYS derive org from server-side token.
+    Prevents developer mistakes and ensures consistent tenant isolation.
+    """
+    org_id = current_user.get("organization_id") or current_user.get("user_id")
+    return query.filter(model.shop_id == org_id)
+
+
 def _org_id(current_user: dict) -> int:
     """Extract organization_id from the current_user dict. Falls back to user_id for legacy compat."""
     return current_user.get("organization_id") or current_user.get("user_id")
 
 
-# --- Auth Endpoints ---
+# ============================================================
+# 🔴 RBAC PERMISSION CHECK (Task 4)
+# ============================================================
+def require_role(current_user: dict, allowed_roles: list):
+    """
+    Enforce role-based access control.
+    Raises 403 if the user's role is not in the allowed list.
+    """
+    user_role = current_user.get("role", "staff")
+    if user_role not in allowed_roles:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Permission denied. Required role: {', '.join(allowed_roles)}. Your role: {user_role}"
+        )
+
+
+# ============================================================
+# AUTH ENDPOINTS
+# ============================================================
 @router.post("/login")
 @limiter.limit("10/minute")
 def login(request: Request, form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
@@ -124,7 +158,55 @@ def validate_token(request: Request, current_user: dict = Depends(get_current_us
     return {"status": "ok", "user": current_user}
 
 
-# --- Products CRUD ---
+# ============================================================
+# 🔴 INVITE SCAFFOLD (Task 5)
+# ============================================================
+@router.post("/invite")
+@limiter.limit("10/minute")
+def invite_user(request: Request, body: InviteRequest, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    """
+    Placeholder for future invite system.
+    Only admins can invite new users to their organization.
+    Full email logic NOT implemented yet — this is a foundation scaffold.
+    """
+    require_role(current_user, ["admin"])
+    org_id = _org_id(current_user)
+
+    # Check if user already exists
+    existing = db.query(models.User).filter(models.User.email == body.email).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="User with this email already exists")
+
+    # Validate role
+    if body.role not in ["admin", "staff"]:
+        raise HTTPException(status_code=400, detail="Invalid role. Must be 'admin' or 'staff'")
+
+    # Create user with temporary password (to be replaced by email invite flow)
+    temp_password = pwd_context.hash("changeme123")
+    new_user = models.User(
+        email=body.email,
+        hashed_password=temp_password,
+        organization_id=org_id,
+        role=body.role
+    )
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+
+    logger.info("User invited: %s (role=%s, org=%s)", body.email, body.role, org_id)
+
+    return {
+        "message": f"User {body.email} invited successfully",
+        "user_id": new_user.id,
+        "role": new_user.role,
+        "organization_id": org_id,
+        "note": "Temporary password set. Email invite flow not yet implemented."
+    }
+
+
+# ============================================================
+# PRODUCTS CRUD (org_filter + RBAC)
+# ============================================================
 @router.post("/products/", response_model=schemas.ProductResponse)
 @limiter.limit("100/minute")
 def create_product(request: Request, product: schemas.ProductCreate, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
@@ -133,12 +215,13 @@ def create_product(request: Request, product: schemas.ProductCreate, db: Session
     logger.info("Creating product for org: %s", org_id)
     logger.info("Product data: %s", product.model_dump())
     
-    sku_exists = db.query(models.Product).filter(
-        models.Product.sku == product.sku,
-        models.Product.shop_id == org_id
-    ).first()
-
-    if sku_exists:
+    # Use org_filter for SKU uniqueness check
+    sku_query = org_filter(
+        db.query(models.Product).filter(models.Product.sku == product.sku),
+        models.Product,
+        current_user
+    )
+    if sku_query.first():
         raise HTTPException(status_code=400, detail="Product with this SKU already exists")
     
     try:
@@ -162,12 +245,13 @@ def create_product(request: Request, product: schemas.ProductCreate, db: Session
 @router.get("/products/", response_model=List[schemas.ProductResponse])
 @limiter.limit("100/minute")
 def read_products(request: Request, skip: int = 0, limit: int = 100, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    org_id = _org_id(current_user)
-    products = db.query(models.Product).filter(models.Product.shop_id == org_id).offset(skip).limit(limit).all()
+    products = org_filter(db.query(models.Product), models.Product, current_user).offset(skip).limit(limit).all()
     return products
 
 
-# --- Sales Entry & Inventory Updater (ACID Transaction) ---
+# ============================================================
+# SALES (org_filter)
+# ============================================================
 @router.post("/sales/")
 def record_sale(payload: schemas.SalesCreate, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     try:
@@ -175,9 +259,10 @@ def record_sale(payload: schemas.SalesCreate, db: Session = Depends(get_db), cur
         logger.info("ORG ID: %s", org_id)
         logger.info("PRODUCT ID: %s", payload.product_id)
 
-        inventory = db.query(models.Inventory).filter(
-            models.Inventory.product_id == payload.product_id,
-            models.Inventory.shop_id == org_id
+        inventory = org_filter(
+            db.query(models.Inventory).filter(models.Inventory.product_id == payload.product_id),
+            models.Inventory,
+            current_user
         ).with_for_update().first()
 
         if not inventory:
@@ -204,7 +289,6 @@ def record_sale(payload: schemas.SalesCreate, db: Session = Depends(get_db), cur
         }
 
     except HTTPException:
-        # Re-raise intended 404 or 400 responses so they don't get trapped as 500s
         raise
     except Exception as e:
         db.rollback()
@@ -212,13 +296,15 @@ def record_sale(payload: schemas.SalesCreate, db: Session = Depends(get_db), cur
 
 @router.get("/sales/history/{product_id}")
 def get_sales_history(product_id: int, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    org_id = _org_id(current_user)
     cutoff = datetime.utcnow() - timedelta(days=7)
     
-    sales = db.query(models.Sale).filter(
-        models.Sale.product_id == product_id,
-        models.Sale.shop_id == org_id,
-        models.Sale.sale_date >= cutoff
+    sales = org_filter(
+        db.query(models.Sale).filter(
+            models.Sale.product_id == product_id,
+            models.Sale.sale_date >= cutoff
+        ),
+        models.Sale,
+        current_user
     ).all()
 
     daily = {}
@@ -229,14 +315,17 @@ def get_sales_history(product_id: int, db: Session = Depends(get_db), current_us
     return daily
 
 
-# --- Inventory Fetch & Modification ---
+# ============================================================
+# INVENTORY (org_filter + RBAC)
+# ============================================================
 @router.post("/inventory/add-stock")
 def add_stock(payload: schemas.AddStockRequest, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     org_id = _org_id(current_user)
     
-    inventory = db.query(models.Inventory).filter_by(
-        product_id=payload.product_id,
-        shop_id=org_id
+    inventory = org_filter(
+        db.query(models.Inventory).filter(models.Inventory.product_id == payload.product_id),
+        models.Inventory,
+        current_user
     ).first()
 
     if not inventory:
@@ -281,28 +370,31 @@ def get_inventory_summary(request: Request, limit: int = 100, db: Session = Depe
 @router.get("/inventory/{product_id}", response_model=schemas.InventoryResponse)
 @limiter.limit("100/minute")
 def get_inventory(request: Request, product_id: int, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    org_id = _org_id(current_user)
-    inventory = db.query(models.Inventory).filter(
-        models.Inventory.shop_id == org_id,
-        models.Inventory.product_id == product_id
+    inventory = org_filter(
+        db.query(models.Inventory).filter(models.Inventory.product_id == product_id),
+        models.Inventory,
+        current_user
     ).first()
     if not inventory:
         raise HTTPException(status_code=404, detail="Not found")
     return inventory
 
+
+# ============================================================
+# PRODUCT UPDATE & DELETE (org_filter + RBAC)
+# ============================================================
 @router.put("/products/{product_id}")
 def update_product(product_id: int, updated: schemas.ProductCreate, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    org_id = _org_id(current_user)
-    product = db.query(models.Product).filter(
-        models.Product.id == product_id,
-        models.Product.shop_id == org_id
+    product = org_filter(
+        db.query(models.Product).filter(models.Product.id == product_id),
+        models.Product,
+        current_user
     ).first()
 
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
 
     try:
-        # exclude_unset permits purely partial parameter application seamlessly.
         for key, value in updated.model_dump(exclude_unset=True).items():
             setattr(product, key, value)
         db.commit()
@@ -314,16 +406,20 @@ def update_product(product_id: int, updated: schemas.ProductCreate, db: Session 
 
 @router.delete("/products/{product_id}")
 def delete_product(product_id: int, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    # 🔴 RBAC: Only admins can delete products
+    require_role(current_user, ["admin"])
+    
     org_id = _org_id(current_user)
-    product = db.query(models.Product).filter(
-        models.Product.id == product_id,
-        models.Product.shop_id == org_id
+    product = org_filter(
+        db.query(models.Product).filter(models.Product.id == product_id),
+        models.Product,
+        current_user
     ).first()
 
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
 
-    # Manually cascade inventory and sales dependencies internally preventing Postgres Constraint Crashes
+    # Manually cascade inventory and sales dependencies
     db.query(models.Inventory).filter_by(product_id=product_id, shop_id=org_id).delete()
     db.query(models.Sale).filter_by(product_id=product_id, shop_id=org_id).delete()
     
@@ -331,9 +427,12 @@ def delete_product(product_id: int, db: Session = Depends(get_db), current_user:
     db.commit()
     return {"message": "Product deleted"}
 
-# --- Read-Only Prediction Output (TIGHTLY LIMITED) ---
+
+# ============================================================
+# PREDICTIONS (org_filter)
+# ============================================================
 @router.get("/predictions/{product_id}")
-@limiter.limit("20/minute") # Strict 20 req/min specifically to prevent computational spam
+@limiter.limit("20/minute")
 def get_prediction_insights(request: Request, product_id: int, window_size_days: int = 14, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     org_id = _org_id(current_user)
     try:

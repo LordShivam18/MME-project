@@ -47,6 +47,9 @@ async def lifespan(app: FastAPI):
             conn.execute(text(
                 "ALTER TABLE users ADD COLUMN IF NOT EXISTS organization_id INTEGER"
             ))
+            conn.execute(text(
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS role VARCHAR DEFAULT 'admin'"
+            ))
             conn.commit()
         logger.info("Migration check complete: new columns ensured")
     except Exception as e:
