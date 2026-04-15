@@ -74,7 +74,7 @@ app = FastAPI(
 
 ALLOWED_ORIGINS = [
     "http://localhost:5173",
-    "https://your-vercel-app.vercel.app"
+    "https://mme-project.vercel.app"
 ]
 
 # ---------------- CORS ----------------
