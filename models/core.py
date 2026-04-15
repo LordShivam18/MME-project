@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, ForeignKey, DateTime, CheckConstraint, text, Index, UniqueConstraint
+from sqlalchemy import Column, Integer, String, Float, Boolean, ForeignKey, DateTime, CheckConstraint, text, Index, UniqueConstraint
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from database import Base
@@ -8,7 +8,9 @@ class Organization(Base):
     __tablename__ = "organizations"
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, nullable=False)
+    is_deleted = Column(Boolean, default=False, nullable=False, server_default="false")
     created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     # Relationships
     users = relationship("User", back_populates="organization")
@@ -25,7 +27,9 @@ class User(Base):
     hashed_refresh_token = Column(String, nullable=True)
     organization_id = Column(Integer, ForeignKey("organizations.id"), index=True, nullable=True)
     role = Column(String, default="admin", nullable=False, server_default="admin")
+    is_deleted = Column(Boolean, default=False, nullable=False, server_default="false")
     created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     # Relationships
     organization = relationship("Organization", back_populates="users")
@@ -49,7 +53,9 @@ class Product(Base):
     cost_price = Column(Float)
     selling_price = Column(Float)
     lead_time_days = Column(Integer)
+    is_deleted = Column(Boolean, default=False, nullable=False, server_default="false")
     created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     # Relationships
     organization = relationship("Organization", back_populates="products")
@@ -68,6 +74,8 @@ class Inventory(Base):
     reorder_point = Column(Integer, default=0)
     safety_stock = Column(Integer, default=0)
     last_restocked_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     # Relationships
     organization = relationship("Organization", back_populates="inventory")
@@ -85,6 +93,8 @@ class Sale(Base):
     shop_id = Column(Integer, ForeignKey("organizations.id"))
     quantity_sold = Column(Integer)
     sale_date = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     # Relationships
     organization = relationship("Organization", back_populates="sales")

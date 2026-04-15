@@ -83,13 +83,20 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    # Verify user still exists in DB
+    # Verify user still exists in DB and is not soft-deleted
     from models.core import User
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User no longer exists",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    if getattr(user, 'is_deleted', False):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Account has been deactivated",
             headers={"WWW-Authenticate": "Bearer"},
         )
 

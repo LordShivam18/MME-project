@@ -32,13 +32,17 @@ class InviteRequest(BaseModel):
 # ============================================================
 # 🔴 CENTRALIZED ORG FILTER (Task 1)
 # ============================================================
-def org_filter(query: Query, model, current_user: dict) -> Query:
+def org_filter(query: Query, model, current_user: dict, include_deleted: bool = False) -> Query:
     """
     Centralized organization filter. ALWAYS derive org from server-side token.
     Prevents developer mistakes and ensures consistent tenant isolation.
+    Automatically excludes soft-deleted records unless include_deleted=True.
     """
     org_id = current_user.get("organization_id") or current_user.get("user_id")
-    return query.filter(model.shop_id == org_id)
+    filtered = query.filter(model.shop_id == org_id)
+    if not include_deleted and hasattr(model, 'is_deleted'):
+        filtered = filtered.filter(model.is_deleted == False)
+    return filtered
 
 
 def _org_id(current_user: dict) -> int:
@@ -74,6 +78,10 @@ def login(request: Request, form_data: OAuth2PasswordRequestForm = Depends(), db
     if not user:
         logger.info("User not found")
         raise HTTPException(status_code=401, detail="Incorrect credentials")
+
+    if getattr(user, 'is_deleted', False):
+        logger.info("User account deactivated")
+        raise HTTPException(status_code=401, detail="Account has been deactivated")
         
     logger.info("User found")
     
@@ -397,6 +405,7 @@ def update_product(product_id: int, updated: schemas.ProductCreate, db: Session 
     try:
         for key, value in updated.model_dump(exclude_unset=True).items():
             setattr(product, key, value)
+        product.updated_at = datetime.utcnow()
         db.commit()
         db.refresh(product)
         return product
@@ -409,7 +418,6 @@ def delete_product(product_id: int, db: Session = Depends(get_db), current_user:
     # 🔴 RBAC: Only admins can delete products
     require_role(current_user, ["admin"])
     
-    org_id = _org_id(current_user)
     product = org_filter(
         db.query(models.Product).filter(models.Product.id == product_id),
         models.Product,
@@ -419,11 +427,9 @@ def delete_product(product_id: int, db: Session = Depends(get_db), current_user:
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
 
-    # Manually cascade inventory and sales dependencies
-    db.query(models.Inventory).filter_by(product_id=product_id, shop_id=org_id).delete()
-    db.query(models.Sale).filter_by(product_id=product_id, shop_id=org_id).delete()
-    
-    db.delete(product)
+    # 🔴 SOFT DELETE: Mark as deleted instead of removing from DB
+    product.is_deleted = True
+    product.updated_at = datetime.utcnow()
     db.commit()
     return {"message": "Product deleted"}
 

@@ -41,17 +41,26 @@ async def lifespan(app: FastAPI):
     # Migrate: add columns if they don't exist (for existing DBs)
     try:
         with engine.connect() as conn:
-            conn.execute(text(
-                "ALTER TABLE users ADD COLUMN IF NOT EXISTS hashed_refresh_token VARCHAR"
-            ))
-            conn.execute(text(
-                "ALTER TABLE users ADD COLUMN IF NOT EXISTS organization_id INTEGER"
-            ))
-            conn.execute(text(
-                "ALTER TABLE users ADD COLUMN IF NOT EXISTS role VARCHAR DEFAULT 'admin'"
-            ))
+            # --- Users table ---
+            conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS hashed_refresh_token VARCHAR"))
+            conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS organization_id INTEGER"))
+            conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS role VARCHAR DEFAULT 'admin'"))
+            conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN DEFAULT false"))
+            conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP"))
+            # --- Organizations table ---
+            conn.execute(text("ALTER TABLE organizations ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN DEFAULT false"))
+            conn.execute(text("ALTER TABLE organizations ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP"))
+            # --- Products table ---
+            conn.execute(text("ALTER TABLE products ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN DEFAULT false"))
+            conn.execute(text("ALTER TABLE products ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP"))
+            # --- Inventory table ---
+            conn.execute(text("ALTER TABLE inventory ADD COLUMN IF NOT EXISTS created_at TIMESTAMP"))
+            conn.execute(text("ALTER TABLE inventory ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP"))
+            # --- Sales table ---
+            conn.execute(text("ALTER TABLE sales ADD COLUMN IF NOT EXISTS created_at TIMESTAMP"))
+            conn.execute(text("ALTER TABLE sales ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP"))
             conn.commit()
-        logger.info("Migration check complete: new columns ensured")
+        logger.info("Migration check complete: all columns ensured")
     except Exception as e:
         logger.warning("Migration note: %s", str(e))
     
