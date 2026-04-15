@@ -324,6 +324,11 @@ def invite_user(request: Request, background_tasks: BackgroundTasks, body: Invit
     require_role(current_user, ["admin"])
     org_id = _org_id(current_user)
 
+    # 🔴 SaaS: Check Subscription Status
+    check_subscription_active(db, org_id)
+    # 🔴 SaaS: Check Plan Limits
+    check_plan_limit(db, org_id, "users")
+
     existing = db.query(models.User).filter(models.User.email == body.email).first()
     if existing:
         raise HTTPException(status_code=400, detail="User with this email already exists")
@@ -364,6 +369,11 @@ def invite_user(request: Request, background_tasks: BackgroundTasks, body: Invit
 @limiter.limit("100/minute")
 def create_product(request: Request, background_tasks: BackgroundTasks, product: schemas.ProductCreate, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     org_id = _org_id(current_user)
+    
+    # 🔴 SaaS: Check Subscription Status
+    check_subscription_active(db, org_id)
+    # 🔴 SaaS: Check Plan Limits
+    check_plan_limit(db, org_id, "products")
     
     # SKU uniqueness check (org-scoped, excludes deleted)
     sku_query = org_filter(
@@ -690,4 +700,68 @@ def get_audit_logs(
             }
             for log in logs
         ]
+    }
+# ============================================================
+# 🔴 BILLING SYSTEM (Stripe/Razorpay Ready)
+# ============================================================
+
+class BillingUpgradeRequest(BaseModel):
+    plan: str  # "pro"
+
+@router.post("/billing/upgrade")
+@limiter.limit("5/minute")
+def upgrade_plan(request: Request, body: BillingUpgradeRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    """
+    Simulated upgrade to Pro plan.
+    In production, this would redirect to Stripe/Razorpay checkout.
+    """
+    require_role(current_user, ["admin"])
+    org_id = _org_id(current_user)
+    
+    if body.plan != "pro":
+        raise HTTPException(status_code=400, detail="Invalid plan selected")
+
+    sub = _get_subscription(db, org_id)
+    if not sub:
+        sub = models.Subscription(organization_id=org_id)
+        db.add(sub)
+    
+    sub.plan = "pro"
+    sub.status = "active"
+    sub.expiry_date = datetime.utcnow() + timedelta(days=30)
+    db.commit()
+
+    background_tasks.add_task(
+        log_action, current_user["user_id"], org_id,
+        "UPGRADE", "subscription", sub.id, f"Upgraded to {body.plan}"
+    )
+
+    return {"message": "Successfully upgraded to Pro plan!", "plan": "pro", "expiry": sub.expiry_date}
+
+
+@router.post("/billing/webhook")
+async def billing_webhook(request: Request, db: Session = Depends(get_db)):
+    """
+    Stripe/Razorpay Webhook listener stub.
+    Security: Verify signature in production!
+    """
+    # Pseudo-logic for handling payment success
+    # 1. Verify webhook signature
+    # 2. Extract org_id and event type
+    # 3. Update subscription status in DB
+    return {"status": "webhook_received"}
+
+
+@router.get("/billing/status")
+def get_billing_status(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    """Return current plan name and limits."""
+    org_id = _org_id(current_user)
+    sub = _get_subscription(db, org_id)
+    plan = sub.plan if sub else "free"
+    
+    return {
+        "plan": plan,
+        "status": sub.status if sub else "active",
+        "limits": PLAN_LIMITS.get(plan),
+        "expiry": sub.expiry_date if sub else None
     }

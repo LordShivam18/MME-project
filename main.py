@@ -80,6 +80,20 @@ async def lifespan(app: FastAPI):
         else:
             logger.info("⚠️ Default organization already exists: id=%s", default_org.id)
 
+        # 🔴 SaaS: Ensure default subscription exists for the default org
+        from models.core import Subscription
+        default_sub = db.query(Subscription).filter(Subscription.organization_id == default_org.id).first()
+        if not default_sub:
+            default_sub = Subscription(
+                organization_id=default_org.id,
+                plan="free",
+                status="active"
+            )
+            db.add(default_sub)
+            db.commit()
+            logger.info("✅ Default 'free' subscription created for org: id=%s", default_org.id)
+
+
         # Ensure test user exists
         user = db.query(User).filter(User.email == "test@gmail.com").first()
 
