@@ -14,17 +14,20 @@ function App() {
   // ACTIVE TOKEN VALIDATION
   useEffect(() => {
     const validateSession = async () => {
-      const token = localStorage.getItem('token');
+      const token = localStorage.getItem('access_token');
       if (!token) {
         setIsInitializing(false);
         return;
       }
       try {
         // Ping explicit backend Auth route to cryptographically verify token
+        // If access_token is expired, the axiosClient interceptor will silently refresh it
         await axiosClient.get('/api/v1/me');
         setIsAuthenticated(true);
       } catch (error) {
-        // If it throws 401, axiosClient interceptor automatically wipes it
+        // If both access and refresh fail, interceptor already wiped tokens
+        localStorage.removeItem('access_token');
+        localStorage.removeItem('refresh_token');
         setIsAuthenticated(false);
       } finally {
         setIsInitializing(false);

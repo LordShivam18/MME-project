@@ -5,22 +5,23 @@ from typing import List
 import logging
 import os
 from datetime import datetime, timedelta
-from jose import jwt
-from passlib.context import CryptContext
+from pydantic import BaseModel
 
 from database import get_db
 from models import core as models
 from schemas import core as schemas
 from services.prediction_service import get_product_prediction, invalidate_prediction_cache
 from limiter import limiter
-from auth import get_current_user
+from auth import get_current_user, pwd_context, create_access_token, create_refresh_token, decode_token
 from fastapi.security import OAuth2PasswordRequestForm
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-from auth import pwd_context
-SECRET_KEY = os.getenv("SECRET_KEY", "super_secret_dev_key")
+
+# --- Pydantic schema for refresh request ---
+class RefreshTokenRequest(BaseModel):
+    refresh_token: str
 
 # --- Auth Endpoints ---
 @router.post("/login")
@@ -41,16 +42,74 @@ def login(request: Request, form_data: OAuth2PasswordRequestForm = Depends(), db
         
     logger.info("Password verified")
     
-    # Generate actual JWT
-    access_token = jwt.encode(
-        {"sub": user.email, "user_id": user.id, "exp": datetime.utcnow() + timedelta(days=1)}, 
-        SECRET_KEY, 
-        algorithm="HS256"
-    )
+    # Generate access token (15 min)
+    token_data = {"sub": user.email, "user_id": user.id}
+    access_token = create_access_token(data=token_data)
     
-    logger.info("JWT token generated")
+    # Generate refresh token (7 days)
+    refresh_token = create_refresh_token(data=token_data)
     
-    return {"access_token": access_token, "token_type": "bearer"}
+    # Store hashed refresh token in DB for server-side validation
+    user.hashed_refresh_token = pwd_context.hash(refresh_token)
+    db.commit()
+    
+    logger.info("JWT access + refresh tokens generated")
+    
+    return {
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "token_type": "bearer"
+    }
+
+
+@router.post("/refresh")
+@limiter.limit("30/minute")
+def refresh_access_token(request: Request, body: RefreshTokenRequest, db: Session = Depends(get_db)):
+    """Accept a refresh token, validate against DB, issue a new access token."""
+    payload = decode_token(body.refresh_token)
+    
+    # Ensure this is a refresh token
+    if payload.get("type") != "refresh":
+        raise HTTPException(status_code=401, detail="Invalid token type")
+    
+    user_id = payload.get("user_id")
+    email = payload.get("sub")
+    
+    if not user_id or not email:
+        raise HTTPException(status_code=401, detail="Invalid token payload")
+    
+    # Look up user and validate stored refresh token
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
+    
+    if not user.hashed_refresh_token:
+        raise HTTPException(status_code=401, detail="No active session. Please login again.")
+    
+    if not pwd_context.verify(body.refresh_token, user.hashed_refresh_token):
+        raise HTTPException(status_code=401, detail="Refresh token revoked. Please login again.")
+    
+    # Issue new access token
+    new_access_token = create_access_token(data={"sub": email, "user_id": user.id})
+    
+    logger.info("Access token refreshed for user: %s", email)
+    
+    return {
+        "access_token": new_access_token,
+        "token_type": "bearer"
+    }
+
+
+@router.post("/logout")
+def logout(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    """Invalidate the refresh token in DB, ending the session."""
+    user = db.query(models.User).filter(models.User.id == current_user["user_id"]).first()
+    if user:
+        user.hashed_refresh_token = None
+        db.commit()
+        logger.info("User logged out: %s", current_user["email"])
+    return {"message": "Logged out successfully"}
+
 
 @router.get("/me")
 @limiter.limit("100/minute")

@@ -3,13 +3,35 @@ import axios from 'axios';
 // Base instance tied natively to the Vite Environment runtime
 const axiosClient = axios.create({
   baseURL: import.meta.env.VITE_API_URL,
-  timeout: 5000,
+  timeout: 10000,
 });
 
-// Request Interceptor: Inject JWT Token automatically
+// Track if a refresh is already in-flight to prevent race conditions
+let isRefreshing = false;
+let failedQueue = [];
+
+const processQueue = (error, token = null) => {
+  failedQueue.forEach(prom => {
+    if (error) {
+      prom.reject(error);
+    } else {
+      prom.resolve(token);
+    }
+  });
+  failedQueue = [];
+};
+
+// Force logout: wipe both tokens and redirect
+const forceLogout = () => {
+  localStorage.removeItem('access_token');
+  localStorage.removeItem('refresh_token');
+  window.location.href = '/login';
+};
+
+// Request Interceptor: Inject access token automatically
 axiosClient.interceptors.request.use(
   (config) => {
-    const token = localStorage.getItem('token');
+    const token = localStorage.getItem('access_token');
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
@@ -18,38 +40,87 @@ axiosClient.interceptors.request.use(
   (error) => Promise.reject(error)
 );
 
-// Response Interceptor: 401 Logout & 1-Max Retry Logic
+// Response Interceptor: Silent refresh on 401
 axiosClient.interceptors.response.use(
   (response) => response,
   async (error) => {
-    const config = error.config;
-    
-    // 1. JWT Expired / Unauthorized -> Wipe and kick to login
-    if (error.response && error.response.status === 401) {
-      localStorage.removeItem('token');
-      window.location.href = '/login'; 
-      return Promise.reject(error);
+    const originalRequest = error.config;
+
+    // Only attempt refresh on 401 and if we haven't already retried this request
+    if (error.response && error.response.status === 401 && !originalRequest._retry) {
+      
+      // Don't try to refresh the login or refresh endpoints themselves
+      if (originalRequest.url?.includes('/login') || originalRequest.url?.includes('/refresh')) {
+        return Promise.reject(error);
+      }
+
+      // If a refresh is already in-flight, queue this request
+      if (isRefreshing) {
+        return new Promise((resolve, reject) => {
+          failedQueue.push({ resolve, reject });
+        }).then(token => {
+          originalRequest.headers.Authorization = `Bearer ${token}`;
+          return axiosClient(originalRequest);
+        }).catch(err => {
+          return Promise.reject(err);
+        });
+      }
+
+      originalRequest._retry = true;
+      isRefreshing = true;
+
+      const refreshToken = localStorage.getItem('refresh_token');
+
+      if (!refreshToken) {
+        isRefreshing = false;
+        forceLogout();
+        return Promise.reject(error);
+      }
+
+      try {
+        // Call the refresh endpoint
+        const res = await axios.post(
+          `${import.meta.env.VITE_API_URL}/api/v1/refresh`,
+          { refresh_token: refreshToken },
+          { timeout: 10000 }
+        );
+
+        const newAccessToken = res.data.access_token;
+        localStorage.setItem('access_token', newAccessToken);
+
+        // Retry original request with new token
+        originalRequest.headers.Authorization = `Bearer ${newAccessToken}`;
+        
+        // Process any queued requests
+        processQueue(null, newAccessToken);
+
+        return axiosClient(originalRequest);
+      } catch (refreshError) {
+        // Refresh failed — session is dead
+        processQueue(refreshError, null);
+        forceLogout();
+        return Promise.reject(refreshError);
+      } finally {
+        isRefreshing = false;
+      }
     }
 
-    // 2. Retry Logic: Only retry ONCE for network errors or 5xx server errors
-    if (!config || !config.retry) {
-      config.retry = 0;
+    // Retry Logic: Only retry ONCE for network errors or 5xx server errors
+    if (!originalRequest._retryCount) {
+      originalRequest._retryCount = 0;
     }
     const maxRetries = 1;
     
-    // Only retry if it's a network error (no response) or a 5xx error
     const shouldRetry = !error.response || (error.response.status >= 500 && error.response.status <= 599);
 
-    if (shouldRetry && config.retry < maxRetries) {
-      config.retry += 1;
-      console.warn(`API call failed. Retrying... (${config.retry}/${maxRetries})`);
+    if (shouldRetry && originalRequest._retryCount < maxRetries) {
+      originalRequest._retryCount += 1;
+      console.warn(`API call failed. Retrying... (${originalRequest._retryCount}/${maxRetries})`);
       
-      // Setup exponential backoff wait
       const backoffDelay = new Promise((resolve) => setTimeout(resolve, 1000));
       await backoffDelay;
       
-      // Resend the original exact request
-      return axiosClient(config);
+      return axiosClient(originalRequest);
     }
 
     return Promise.reject(error);

@@ -38,6 +38,17 @@ async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
     logger.info("DB connection successful")
     
+    # Migrate: add hashed_refresh_token column if it doesn't exist (for existing DBs)
+    try:
+        with engine.connect() as conn:
+            conn.execute(text(
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS hashed_refresh_token VARCHAR"
+            ))
+            conn.commit()
+        logger.info("Migration check complete: hashed_refresh_token column ensured")
+    except Exception as e:
+        logger.warning("Migration note: %s", str(e))
+    
     logger.info("Starting seeding process...")
     db = SessionLocal()
 

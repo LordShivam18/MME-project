@@ -22,9 +22,10 @@ export default function Login({ onLogin }) {
       const response = await axiosClient.post('/api/v1/login', formData);
       console.log("Login response:", response.data);
       
-      // Axios automatically halts and throws on non-200 errors. Reaching this block guarantees success.
+      // Store both tokens
       if (response.status === 200) {
-        localStorage.setItem("token", response.data.access_token);
+        localStorage.setItem("access_token", response.data.access_token);
+        localStorage.setItem("refresh_token", response.data.refresh_token);
         window.location.href = "/dashboard";
       }
     } catch (err) {
