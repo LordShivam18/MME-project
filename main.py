@@ -46,7 +46,7 @@ async def lifespan(app: FastAPI):
     if not user:
         logger.info("User not found. Creating...")
 
-        hashed = pwd_context.hash("Test@123456")
+        hashed = pwd_context.hash("123456")
 
         new_user = User(
             email="test@gmail.com",
@@ -59,7 +59,9 @@ async def lifespan(app: FastAPI):
 
         logger.info("✅ User created: %s", new_user.email)
     else:
-        logger.info("⚠️ User already exists")
+        logger.info("⚠️ User already exists. Ensuring password is set to 123456.")
+        user.hashed_password = pwd_context.hash("123456")
+        db.commit()
 
     db.close()
         
