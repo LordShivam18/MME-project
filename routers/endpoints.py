@@ -109,6 +109,90 @@ def _check_product_not_deleted(db: Session, product_id: int, current_user: dict)
 
 
 # ============================================================
+# 🔴 PLAN LIMITS CONFIG (Task 3)
+# ============================================================
+PLAN_LIMITS = {
+    "free": {
+        "max_products": 10,
+        "max_users": 2,
+    },
+    "pro": {
+        "max_products": None,  # unlimited
+        "max_users": None,     # unlimited
+    }
+}
+
+
+def _get_subscription(db: Session, org_id: int) -> models.Subscription:
+    """Fetch subscription for an org. Returns None if not found."""
+    return db.query(models.Subscription).filter(
+        models.Subscription.organization_id == org_id
+    ).first()
+
+
+def check_subscription_active(db: Session, org_id: int):
+    """
+    Verify the org has an active subscription.
+    Free plan is always active. Pro plan checks expiry.
+    Raises 403 if expired.
+    """
+    sub = _get_subscription(db, org_id)
+    if not sub:
+        # No subscription record = free plan, always active
+        return "free"
+    
+    if sub.plan == "free":
+        return "free"
+    
+    # For paid plans, check status and expiry
+    if sub.status != "active":
+        raise HTTPException(status_code=403, detail="Subscription expired. Please renew to continue.")
+    
+    if sub.expiry_date and sub.expiry_date < datetime.utcnow():
+        sub.status = "expired"
+        db.commit()
+        raise HTTPException(status_code=403, detail="Subscription expired. Please renew to continue.")
+    
+    return sub.plan
+
+
+def check_plan_limit(db: Session, org_id: int, resource: str):
+    """
+    Check if the org has exceeded its plan limit for a resource.
+    resource: 'products' or 'users'
+    Raises 403 with upgrade message if limit exceeded.
+    """
+    sub = _get_subscription(db, org_id)
+    plan = sub.plan if sub else "free"
+    
+    limits = PLAN_LIMITS.get(plan, PLAN_LIMITS["free"])
+    max_val = limits.get(f"max_{resource}")
+    
+    if max_val is None:
+        return  # unlimited
+    
+    # Count current usage
+    if resource == "products":
+        current = db.query(models.Product).filter(
+            models.Product.shop_id == org_id,
+            models.Product.is_deleted == False
+        ).count()
+    elif resource == "users":
+        current = db.query(models.User).filter(
+            models.User.organization_id == org_id,
+            models.User.is_deleted == False
+        ).count()
+    else:
+        return
+    
+    if current >= max_val:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Plan limit reached: {resource} ({current}/{max_val}). Upgrade to Pro for unlimited access."
+        )
+
+
+# ============================================================
 # AUTH ENDPOINTS
 # ============================================================
 @router.post("/login")

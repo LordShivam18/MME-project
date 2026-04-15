@@ -17,6 +17,7 @@ class Organization(Base):
     products = relationship("Product", back_populates="organization")
     inventory = relationship("Inventory", back_populates="organization")
     sales = relationship("Sale", back_populates="organization")
+    subscription = relationship("Subscription", back_populates="organization", uselist=False)
 
 
 class User(Base):
@@ -111,3 +112,19 @@ class AuditLog(Base):
     entity_id = Column(Integer, nullable=True)
     details = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class Subscription(Base):
+    __tablename__ = "subscriptions"
+    id = Column(Integer, primary_key=True, index=True)
+    organization_id = Column(Integer, ForeignKey("organizations.id"), unique=True, index=True, nullable=False)
+    plan = Column(String, default="free", nullable=False, server_default="free")
+    status = Column(String, default="active", nullable=False, server_default="active")
+    stripe_customer_id = Column(String, nullable=True)
+    stripe_subscription_id = Column(String, nullable=True)
+    expiry_date = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Relationships
+    organization = relationship("Organization", back_populates="subscription")
