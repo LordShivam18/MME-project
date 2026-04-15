@@ -23,6 +23,13 @@ router = APIRouter()
 class RefreshTokenRequest(BaseModel):
     refresh_token: str
 
+
+# --- Helper: extract org_id safely ---
+def _org_id(current_user: dict) -> int:
+    """Extract organization_id from the current_user dict. Falls back to user_id for legacy compat."""
+    return current_user.get("organization_id") or current_user.get("user_id")
+
+
 # --- Auth Endpoints ---
 @router.post("/login")
 @limiter.limit("10/minute")
@@ -116,19 +123,19 @@ def logout(db: Session = Depends(get_db), current_user: dict = Depends(get_curre
 def validate_token(request: Request, current_user: dict = Depends(get_current_user)):
     return {"status": "ok", "user": current_user}
 
+
 # --- Products CRUD ---
 @router.post("/products/", response_model=schemas.ProductResponse)
 @limiter.limit("100/minute")
 def create_product(request: Request, product: schemas.ProductCreate, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    # NOTE: Extrapolating into an object fallback to strictly enforce requested assignment logic without triggering Dictionary assignment aborts locally in production overrides.
-    user_id = current_user.id if hasattr(current_user, 'id') else current_user.get("user_id")
+    org_id = _org_id(current_user)
     
-    logger.info("Creating product for user: %s", user_id)
+    logger.info("Creating product for org: %s", org_id)
     logger.info("Product data: %s", product.model_dump())
     
     sku_exists = db.query(models.Product).filter(
         models.Product.sku == product.sku,
-        models.Product.shop_id == user_id
+        models.Product.shop_id == org_id
     ).first()
 
     if sku_exists:
@@ -136,12 +143,12 @@ def create_product(request: Request, product: schemas.ProductCreate, db: Session
     
     try:
         new_product = models.Product(**product.model_dump())
-        new_product.shop_id = user_id
+        new_product.shop_id = org_id
         db.add(new_product)
-        db.flush() # Locks generation sequence cleanly without terminating bounds
+        db.flush()
         
         # Synchronize Inventory Tracker natively onto the identical transaction pipeline
-        db_inv = models.Inventory(shop_id=user_id, product_id=new_product.id, quantity_on_hand=0)
+        db_inv = models.Inventory(shop_id=org_id, product_id=new_product.id, quantity_on_hand=0)
         db.add(db_inv)
         
         db.commit()
@@ -155,8 +162,8 @@ def create_product(request: Request, product: schemas.ProductCreate, db: Session
 @router.get("/products/", response_model=List[schemas.ProductResponse])
 @limiter.limit("100/minute")
 def read_products(request: Request, skip: int = 0, limit: int = 100, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    shop_id = current_user.get("user_id", 1)
-    products = db.query(models.Product).filter(models.Product.shop_id == shop_id).offset(skip).limit(limit).all()
+    org_id = _org_id(current_user)
+    products = db.query(models.Product).filter(models.Product.shop_id == org_id).offset(skip).limit(limit).all()
     return products
 
 
@@ -164,13 +171,13 @@ def read_products(request: Request, skip: int = 0, limit: int = 100, db: Session
 @router.post("/sales/")
 def record_sale(payload: schemas.SalesCreate, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     try:
-        user_id = current_user.id if hasattr(current_user, 'id') else current_user.get("user_id")
-        logger.info("USER ID: %s", user_id)
+        org_id = _org_id(current_user)
+        logger.info("ORG ID: %s", org_id)
         logger.info("PRODUCT ID: %s", payload.product_id)
 
         inventory = db.query(models.Inventory).filter(
             models.Inventory.product_id == payload.product_id,
-            models.Inventory.shop_id == user_id
+            models.Inventory.shop_id == org_id
         ).with_for_update().first()
 
         if not inventory:
@@ -183,7 +190,7 @@ def record_sale(payload: schemas.SalesCreate, db: Session = Depends(get_db), cur
 
         sale = models.Sale(
             product_id=payload.product_id,
-            shop_id=user_id,
+            shop_id=org_id,
             quantity_sold=payload.quantity_sold
         )
 
@@ -205,12 +212,12 @@ def record_sale(payload: schemas.SalesCreate, db: Session = Depends(get_db), cur
 
 @router.get("/sales/history/{product_id}")
 def get_sales_history(product_id: int, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    user_id = current_user.id if hasattr(current_user, 'id') else current_user.get("user_id")
+    org_id = _org_id(current_user)
     cutoff = datetime.utcnow() - timedelta(days=7)
     
     sales = db.query(models.Sale).filter(
         models.Sale.product_id == product_id,
-        models.Sale.shop_id == user_id,
+        models.Sale.shop_id == org_id,
         models.Sale.sale_date >= cutoff
     ).all()
 
@@ -225,17 +232,17 @@ def get_sales_history(product_id: int, db: Session = Depends(get_db), current_us
 # --- Inventory Fetch & Modification ---
 @router.post("/inventory/add-stock")
 def add_stock(payload: schemas.AddStockRequest, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    user_id = current_user.id if hasattr(current_user, 'id') else current_user.get("user_id")
+    org_id = _org_id(current_user)
     
     inventory = db.query(models.Inventory).filter_by(
         product_id=payload.product_id,
-        shop_id=user_id
+        shop_id=org_id
     ).first()
 
     if not inventory:
         inventory = models.Inventory(
             product_id=payload.product_id,
-            shop_id=user_id,
+            shop_id=org_id,
             quantity_on_hand=payload.quantity
         )
         db.add(inventory)
@@ -249,13 +256,13 @@ def add_stock(payload: schemas.AddStockRequest, db: Session = Depends(get_db), c
 @router.get("/inventory/summary", response_model=List[schemas.InventorySummaryResponse])
 @limiter.limit("50/minute")
 def get_inventory_summary(request: Request, limit: int = 100, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    user_id = current_user.id if hasattr(current_user, 'id') else current_user.get("user_id")
-    # Highly optimized single DB join avoiding Promise.all API abuse
+    org_id = _org_id(current_user)
+    # Highly optimized single DB join
     joined_data = db.query(models.Product, models.Inventory).join(
         models.Inventory, models.Product.id == models.Inventory.product_id
     ).filter(
-        models.Product.shop_id == user_id,
-        models.Inventory.shop_id == user_id
+        models.Product.shop_id == org_id,
+        models.Inventory.shop_id == org_id
     ).limit(limit).all()
     
     summary = []
@@ -274,9 +281,9 @@ def get_inventory_summary(request: Request, limit: int = 100, db: Session = Depe
 @router.get("/inventory/{product_id}", response_model=schemas.InventoryResponse)
 @limiter.limit("100/minute")
 def get_inventory(request: Request, product_id: int, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    user_id = current_user.id if hasattr(current_user, 'id') else current_user.get("user_id")
+    org_id = _org_id(current_user)
     inventory = db.query(models.Inventory).filter(
-        models.Inventory.shop_id == user_id,
+        models.Inventory.shop_id == org_id,
         models.Inventory.product_id == product_id
     ).first()
     if not inventory:
@@ -285,10 +292,10 @@ def get_inventory(request: Request, product_id: int, db: Session = Depends(get_d
 
 @router.put("/products/{product_id}")
 def update_product(product_id: int, updated: schemas.ProductCreate, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    user_id = current_user.id if hasattr(current_user, 'id') else current_user.get("user_id")
+    org_id = _org_id(current_user)
     product = db.query(models.Product).filter(
         models.Product.id == product_id,
-        models.Product.shop_id == user_id
+        models.Product.shop_id == org_id
     ).first()
 
     if not product:
@@ -307,18 +314,18 @@ def update_product(product_id: int, updated: schemas.ProductCreate, db: Session 
 
 @router.delete("/products/{product_id}")
 def delete_product(product_id: int, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    user_id = current_user.id if hasattr(current_user, 'id') else current_user.get("user_id")
+    org_id = _org_id(current_user)
     product = db.query(models.Product).filter(
         models.Product.id == product_id,
-        models.Product.shop_id == user_id
+        models.Product.shop_id == org_id
     ).first()
 
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
 
     # Manually cascade inventory and sales dependencies internally preventing Postgres Constraint Crashes
-    db.query(models.Inventory).filter_by(product_id=product_id, shop_id=user_id).delete()
-    db.query(models.Sale).filter_by(product_id=product_id, shop_id=user_id).delete()
+    db.query(models.Inventory).filter_by(product_id=product_id, shop_id=org_id).delete()
+    db.query(models.Sale).filter_by(product_id=product_id, shop_id=org_id).delete()
     
     db.delete(product)
     db.commit()
@@ -328,9 +335,9 @@ def delete_product(product_id: int, db: Session = Depends(get_db), current_user:
 @router.get("/predictions/{product_id}")
 @limiter.limit("20/minute") # Strict 20 req/min specifically to prevent computational spam
 def get_prediction_insights(request: Request, product_id: int, window_size_days: int = 14, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    user_id = current_user.id if hasattr(current_user, 'id') else current_user.get("user_id")
+    org_id = _org_id(current_user)
     try:
-        result = get_product_prediction(db, user_id, product_id, window_size_days)
+        result = get_product_prediction(db, org_id, product_id, window_size_days)
         return result
     except Exception as e:
         logger.error("PREDICTION ERROR: %s", str(e))

@@ -31,50 +31,101 @@ async def lifespan(app: FastAPI):
     logger.info("🚀 STARTUP RUNNING")
     import models.core   # force model registration
     from database import Base, engine, SessionLocal
-    from models.core import User
+    from models.core import User, Organization
     from auth import pwd_context
 
     logger.info("Connecting to DB...")
     Base.metadata.create_all(bind=engine)
     logger.info("DB connection successful")
     
-    # Migrate: add hashed_refresh_token column if it doesn't exist (for existing DBs)
+    # Migrate: add columns if they don't exist (for existing DBs)
     try:
         with engine.connect() as conn:
             conn.execute(text(
                 "ALTER TABLE users ADD COLUMN IF NOT EXISTS hashed_refresh_token VARCHAR"
             ))
+            conn.execute(text(
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS organization_id INTEGER"
+            ))
             conn.commit()
-        logger.info("Migration check complete: hashed_refresh_token column ensured")
+        logger.info("Migration check complete: new columns ensured")
     except Exception as e:
         logger.warning("Migration note: %s", str(e))
     
     logger.info("Starting seeding process...")
     db = SessionLocal()
 
-    user = db.query(User).filter(User.email == "test@gmail.com").first()
+    try:
+        # Ensure default organization exists
+        default_org = db.query(Organization).filter(Organization.name == "Default Organization").first()
+        if not default_org:
+            default_org = Organization(name="Default Organization")
+            db.add(default_org)
+            db.commit()
+            db.refresh(default_org)
+            logger.info("✅ Default organization created: id=%s", default_org.id)
+        else:
+            logger.info("⚠️ Default organization already exists: id=%s", default_org.id)
 
-    if not user:
-        logger.info("User not found. Creating...")
+        # Ensure test user exists
+        user = db.query(User).filter(User.email == "test@gmail.com").first()
 
-        hashed = pwd_context.hash("123456")
+        if not user:
+            logger.info("User not found. Creating...")
 
-        new_user = User(
-            email="test@gmail.com",
-            hashed_password=hashed
-        )
+            hashed = pwd_context.hash("123456")
 
-        db.add(new_user)
-        db.commit()
-        db.refresh(new_user)
+            new_user = User(
+                email="test@gmail.com",
+                hashed_password=hashed,
+                organization_id=default_org.id
+            )
 
-        logger.info("✅ User created: %s", new_user.email)
-    else:
-        logger.info("⚠️ User already exists. Ensuring password is set to 123456.")
-        user.hashed_password = pwd_context.hash("123456")
-        db.commit()
+            db.add(new_user)
+            db.commit()
+            db.refresh(new_user)
 
-    db.close()
+            logger.info("✅ User created: %s (org_id=%s)", new_user.email, new_user.organization_id)
+        else:
+            logger.info("⚠️ User already exists. Ensuring password and org assignment.")
+            user.hashed_password = pwd_context.hash("123456")
+            if not user.organization_id:
+                user.organization_id = default_org.id
+                logger.info("Assigned user to default org: id=%s", default_org.id)
+            db.commit()
+
+        # Migrate existing data: update shop_id references for existing products/inventory/sales
+        # that may reference user.id instead of organization.id
+        from models.core import Product, Inventory, Sale
+        orphan_products = db.query(Product).filter(
+            Product.shop_id != default_org.id
+        ).all()
+        if orphan_products:
+            for p in orphan_products:
+                p.shop_id = default_org.id
+            db.commit()
+            logger.info("Migrated %d products to default org", len(orphan_products))
+
+        orphan_inventory = db.query(Inventory).filter(
+            Inventory.shop_id != default_org.id
+        ).all()
+        if orphan_inventory:
+            for inv in orphan_inventory:
+                inv.shop_id = default_org.id
+            db.commit()
+            logger.info("Migrated %d inventory records to default org", len(orphan_inventory))
+
+        orphan_sales = db.query(Sale).filter(
+            Sale.shop_id != default_org.id
+        ).all()
+        if orphan_sales:
+            for s in orphan_sales:
+                s.shop_id = default_org.id
+            db.commit()
+            logger.info("Migrated %d sales to default org", len(orphan_sales))
+
+    finally:
+        db.close()
         
     yield
 
