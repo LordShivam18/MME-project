@@ -81,9 +81,17 @@ ALLOWED_ORIGINS = [
 ]
 
 # ---------------- CORS ----------------
+# Explicit re-import as per the requested configuration pattern
+from fastapi.middleware.cors import CORSMiddleware
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
+    allow_origins=[
+        "http://localhost:5173",
+        "https://mme-project.vercel.app",
+        "https://mme-project-p1qd0jd48-shivam-chourasias-projects.vercel.app"
+    ],
+    allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
