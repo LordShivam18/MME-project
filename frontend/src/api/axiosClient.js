@@ -78,7 +78,7 @@ axiosClient.interceptors.response.use(
       }
 
       try {
-        // Call the refresh endpoint
+        // Call the refresh endpoint (returns rotated tokens)
         const res = await axios.post(
           `${import.meta.env.VITE_API_URL}/api/v1/refresh`,
           { refresh_token: refreshToken },
@@ -87,6 +87,11 @@ axiosClient.interceptors.response.use(
 
         const newAccessToken = res.data.access_token;
         localStorage.setItem('access_token', newAccessToken);
+        
+        // Store rotated refresh token (old one is now invalid)
+        if (res.data.refresh_token) {
+          localStorage.setItem('refresh_token', res.data.refresh_token);
+        }
 
         // Retry original request with new token
         originalRequest.headers.Authorization = `Bearer ${newAccessToken}`;

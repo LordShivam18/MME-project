@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, BackgroundTasks
 from sqlalchemy.orm import Session, Query
 from sqlalchemy.exc import IntegrityError
 from typing import List
@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from pydantic import BaseModel
 from functools import wraps
 
-from database import get_db
+from database import get_db, SessionLocal
 from models import core as models
 from schemas import core as schemas
 from services.prediction_service import get_product_prediction, invalidate_prediction_cache
@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-# --- Pydantic schema for refresh request ---
+# --- Pydantic schemas ---
 class RefreshTokenRequest(BaseModel):
     refresh_token: str
 
@@ -30,12 +30,11 @@ class InviteRequest(BaseModel):
 
 
 # ============================================================
-# 🔴 CENTRALIZED ORG FILTER (Task 1)
+# CENTRALIZED ORG FILTER
 # ============================================================
 def org_filter(query: Query, model, current_user: dict, include_deleted: bool = False) -> Query:
     """
     Centralized organization filter. ALWAYS derive org from server-side token.
-    Prevents developer mistakes and ensures consistent tenant isolation.
     Automatically excludes soft-deleted records unless include_deleted=True.
     """
     org_id = current_user.get("organization_id") or current_user.get("user_id")
@@ -46,18 +45,14 @@ def org_filter(query: Query, model, current_user: dict, include_deleted: bool = 
 
 
 def _org_id(current_user: dict) -> int:
-    """Extract organization_id from the current_user dict. Falls back to user_id for legacy compat."""
+    """Extract organization_id from the current_user dict."""
     return current_user.get("organization_id") or current_user.get("user_id")
 
 
 # ============================================================
-# 🔴 RBAC PERMISSION CHECK (Task 4)
+# RBAC PERMISSION CHECK
 # ============================================================
 def require_role(current_user: dict, allowed_roles: list):
-    """
-    Enforce role-based access control.
-    Raises 403 if the user's role is not in the allowed list.
-    """
     user_role = current_user.get("role", "staff")
     if user_role not in allowed_roles:
         raise HTTPException(
@@ -67,11 +62,58 @@ def require_role(current_user: dict, allowed_roles: list):
 
 
 # ============================================================
+# AUDIT LOG HELPER (BackgroundTask-safe)
+# ============================================================
+def log_action(user_id: int, organization_id: int, action: str, entity_type: str, entity_id: int = None, details: str = None):
+    """
+    Non-blocking audit log writer. Runs in background thread with its own DB session.
+    Safe to call from BackgroundTasks — does not share request-scoped session.
+    """
+    db = SessionLocal()
+    try:
+        audit = models.AuditLog(
+            user_id=user_id,
+            organization_id=organization_id,
+            action=action,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            details=details
+        )
+        db.add(audit)
+        db.commit()
+        logger.info("AUDIT: user=%s action=%s entity=%s:%s", user_id, action, entity_type, entity_id)
+    except Exception as e:
+        logger.warning("AUDIT LOG FAILED: %s", str(e))
+        db.rollback()
+    finally:
+        db.close()
+
+
+# ============================================================
+# SOFT-DELETE GUARD
+# ============================================================
+def _check_product_not_deleted(db: Session, product_id: int, current_user: dict):
+    """Verify a product exists and is not soft-deleted. Returns the product or raises 400."""
+    product = org_filter(
+        db.query(models.Product).filter(models.Product.id == product_id),
+        models.Product,
+        current_user,
+        include_deleted=True
+    ).first()
+
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+    if product.is_deleted:
+        raise HTTPException(status_code=400, detail="Cannot operate on deleted product")
+    return product
+
+
+# ============================================================
 # AUTH ENDPOINTS
 # ============================================================
 @router.post("/login")
 @limiter.limit("10/minute")
-def login(request: Request, form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+def login(request: Request, background_tasks: BackgroundTasks, form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     logger.info("User lookup executed")
     user = db.query(models.User).filter(models.User.email == form_data.username).first()
     
@@ -98,11 +140,17 @@ def login(request: Request, form_data: OAuth2PasswordRequestForm = Depends(), db
     # Generate refresh token (7 days)
     refresh_token = create_refresh_token(data=token_data)
     
-    # Store hashed refresh token in DB for server-side validation
+    # Store hashed refresh token in DB
     user.hashed_refresh_token = pwd_context.hash(refresh_token)
     db.commit()
     
     logger.info("JWT access + refresh tokens generated")
+    
+    # Audit: login event (background)
+    background_tasks.add_task(
+        log_action, user.id, user.organization_id or 0,
+        "LOGIN", "user", user.id
+    )
     
     return {
         "access_token": access_token,
@@ -114,10 +162,9 @@ def login(request: Request, form_data: OAuth2PasswordRequestForm = Depends(), db
 @router.post("/refresh")
 @limiter.limit("30/minute")
 def refresh_access_token(request: Request, body: RefreshTokenRequest, db: Session = Depends(get_db)):
-    """Accept a refresh token, validate against DB, issue a new access token."""
+    """Accept a refresh token, validate, ROTATE both tokens, return new pair."""
     payload = decode_token(body.refresh_token)
     
-    # Ensure this is a refresh token
     if payload.get("type") != "refresh":
         raise HTTPException(status_code=401, detail="Invalid token type")
     
@@ -127,10 +174,12 @@ def refresh_access_token(request: Request, body: RefreshTokenRequest, db: Sessio
     if not user_id or not email:
         raise HTTPException(status_code=401, detail="Invalid token payload")
     
-    # Look up user and validate stored refresh token
     user = db.query(models.User).filter(models.User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
+    
+    if getattr(user, 'is_deleted', False):
+        raise HTTPException(status_code=401, detail="Account has been deactivated")
     
     if not user.hashed_refresh_token:
         raise HTTPException(status_code=401, detail="No active session. Please login again.")
@@ -138,25 +187,37 @@ def refresh_access_token(request: Request, body: RefreshTokenRequest, db: Sessio
     if not pwd_context.verify(body.refresh_token, user.hashed_refresh_token):
         raise HTTPException(status_code=401, detail="Refresh token revoked. Please login again.")
     
-    # Issue new access token
-    new_access_token = create_access_token(data={"sub": email, "user_id": user.id})
+    # 🔴 ROTATION: Issue new access AND refresh token, invalidate old refresh
+    token_data = {"sub": email, "user_id": user.id}
+    new_access_token = create_access_token(data=token_data)
+    new_refresh_token = create_refresh_token(data=token_data)
     
-    logger.info("Access token refreshed for user: %s", email)
+    # Store new hashed refresh token — old one is now invalid
+    user.hashed_refresh_token = pwd_context.hash(new_refresh_token)
+    db.commit()
+    
+    logger.info("Token rotation complete for user: %s", email)
     
     return {
         "access_token": new_access_token,
+        "refresh_token": new_refresh_token,
         "token_type": "bearer"
     }
 
 
 @router.post("/logout")
-def logout(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+def logout(background_tasks: BackgroundTasks, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     """Invalidate the refresh token in DB, ending the session."""
     user = db.query(models.User).filter(models.User.id == current_user["user_id"]).first()
     if user:
         user.hashed_refresh_token = None
         db.commit()
         logger.info("User logged out: %s", current_user["email"])
+    
+    background_tasks.add_task(
+        log_action, current_user["user_id"], _org_id(current_user),
+        "LOGOUT", "user", current_user["user_id"]
+    )
     return {"message": "Logged out successfully"}
 
 
@@ -167,29 +228,21 @@ def validate_token(request: Request, current_user: dict = Depends(get_current_us
 
 
 # ============================================================
-# 🔴 INVITE SCAFFOLD (Task 5)
+# INVITE (with audit)
 # ============================================================
 @router.post("/invite")
 @limiter.limit("10/minute")
-def invite_user(request: Request, body: InviteRequest, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    """
-    Placeholder for future invite system.
-    Only admins can invite new users to their organization.
-    Full email logic NOT implemented yet — this is a foundation scaffold.
-    """
+def invite_user(request: Request, background_tasks: BackgroundTasks, body: InviteRequest, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     require_role(current_user, ["admin"])
     org_id = _org_id(current_user)
 
-    # Check if user already exists
     existing = db.query(models.User).filter(models.User.email == body.email).first()
     if existing:
         raise HTTPException(status_code=400, detail="User with this email already exists")
 
-    # Validate role
     if body.role not in ["admin", "staff"]:
         raise HTTPException(status_code=400, detail="Invalid role. Must be 'admin' or 'staff'")
 
-    # Create user with temporary password (to be replaced by email invite flow)
     temp_password = pwd_context.hash("changeme123")
     new_user = models.User(
         email=body.email,
@@ -201,7 +254,11 @@ def invite_user(request: Request, body: InviteRequest, db: Session = Depends(get
     db.commit()
     db.refresh(new_user)
 
-    logger.info("User invited: %s (role=%s, org=%s)", body.email, body.role, org_id)
+    # Audit: invite (background)
+    background_tasks.add_task(
+        log_action, current_user["user_id"], org_id,
+        "INVITE", "user", new_user.id, f"Invited {body.email} as {body.role}"
+    )
 
     return {
         "message": f"User {body.email} invited successfully",
@@ -213,17 +270,14 @@ def invite_user(request: Request, body: InviteRequest, db: Session = Depends(get
 
 
 # ============================================================
-# PRODUCTS CRUD (org_filter + RBAC)
+# PRODUCTS CRUD
 # ============================================================
 @router.post("/products/", response_model=schemas.ProductResponse)
 @limiter.limit("100/minute")
-def create_product(request: Request, product: schemas.ProductCreate, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+def create_product(request: Request, background_tasks: BackgroundTasks, product: schemas.ProductCreate, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     org_id = _org_id(current_user)
     
-    logger.info("Creating product for org: %s", org_id)
-    logger.info("Product data: %s", product.model_dump())
-    
-    # Use org_filter for SKU uniqueness check
+    # SKU uniqueness check (org-scoped, excludes deleted)
     sku_query = org_filter(
         db.query(models.Product).filter(models.Product.sku == product.sku),
         models.Product,
@@ -238,12 +292,18 @@ def create_product(request: Request, product: schemas.ProductCreate, db: Session
         db.add(new_product)
         db.flush()
         
-        # Synchronize Inventory Tracker natively onto the identical transaction pipeline
         db_inv = models.Inventory(shop_id=org_id, product_id=new_product.id, quantity_on_hand=0)
         db.add(db_inv)
         
         db.commit()
         db.refresh(new_product)
+        
+        # Audit (background)
+        background_tasks.add_task(
+            log_action, current_user["user_id"], org_id,
+            "CREATE", "product", new_product.id, f"SKU={product.sku}"
+        )
+        
         return new_product
     except Exception as e:
         db.rollback()
@@ -258,14 +318,15 @@ def read_products(request: Request, skip: int = 0, limit: int = 100, db: Session
 
 
 # ============================================================
-# SALES (org_filter)
+# SALES
 # ============================================================
 @router.post("/sales/")
-def record_sale(payload: schemas.SalesCreate, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+def record_sale(payload: schemas.SalesCreate, background_tasks: BackgroundTasks, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     try:
         org_id = _org_id(current_user)
-        logger.info("ORG ID: %s", org_id)
-        logger.info("PRODUCT ID: %s", payload.product_id)
+
+        # 🔴 Guard: prevent sale on deleted product
+        _check_product_not_deleted(db, payload.product_id, current_user)
 
         inventory = org_filter(
             db.query(models.Inventory).filter(models.Inventory.product_id == payload.product_id),
@@ -280,6 +341,7 @@ def record_sale(payload: schemas.SalesCreate, db: Session = Depends(get_db), cur
             raise HTTPException(status_code=400, detail="Not enough stock")
 
         inventory.quantity_on_hand -= payload.quantity_sold
+        inventory.updated_at = datetime.utcnow()
 
         sale = models.Sale(
             product_id=payload.product_id,
@@ -290,6 +352,12 @@ def record_sale(payload: schemas.SalesCreate, db: Session = Depends(get_db), cur
         db.add(sale)
         db.commit()
         db.refresh(inventory)
+
+        # Audit (background)
+        background_tasks.add_task(
+            log_action, current_user["user_id"], org_id,
+            "CREATE", "sale", sale.id, f"product={payload.product_id} qty={payload.quantity_sold}"
+        )
 
         return {
             "message": "Sale recorded!",
@@ -324,11 +392,14 @@ def get_sales_history(product_id: int, db: Session = Depends(get_db), current_us
 
 
 # ============================================================
-# INVENTORY (org_filter + RBAC)
+# INVENTORY
 # ============================================================
 @router.post("/inventory/add-stock")
-def add_stock(payload: schemas.AddStockRequest, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+def add_stock(payload: schemas.AddStockRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     org_id = _org_id(current_user)
+    
+    # 🔴 Guard: prevent stock ops on deleted product
+    _check_product_not_deleted(db, payload.product_id, current_user)
     
     inventory = org_filter(
         db.query(models.Inventory).filter(models.Inventory.product_id == payload.product_id),
@@ -345,21 +416,30 @@ def add_stock(payload: schemas.AddStockRequest, db: Session = Depends(get_db), c
         db.add(inventory)
     else:
         inventory.quantity_on_hand += payload.quantity
+        inventory.updated_at = datetime.utcnow()
 
     db.commit()
     db.refresh(inventory)
+    
+    # Audit (background)
+    background_tasks.add_task(
+        log_action, current_user["user_id"], org_id,
+        "ADD_STOCK", "inventory", inventory.id, f"product={payload.product_id} qty={payload.quantity}"
+    )
+    
     return {"message": "Stock updated successfully", "quantity_on_hand": inventory.quantity_on_hand}
 
 @router.get("/inventory/summary", response_model=List[schemas.InventorySummaryResponse])
 @limiter.limit("50/minute")
 def get_inventory_summary(request: Request, limit: int = 100, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     org_id = _org_id(current_user)
-    # Highly optimized single DB join
+    # Join excludes soft-deleted products
     joined_data = db.query(models.Product, models.Inventory).join(
         models.Inventory, models.Product.id == models.Inventory.product_id
     ).filter(
         models.Product.shop_id == org_id,
-        models.Inventory.shop_id == org_id
+        models.Inventory.shop_id == org_id,
+        models.Product.is_deleted == False
     ).limit(limit).all()
     
     summary = []
@@ -389,10 +469,10 @@ def get_inventory(request: Request, product_id: int, db: Session = Depends(get_d
 
 
 # ============================================================
-# PRODUCT UPDATE & DELETE (org_filter + RBAC)
+# PRODUCT UPDATE & DELETE
 # ============================================================
 @router.put("/products/{product_id}")
-def update_product(product_id: int, updated: schemas.ProductCreate, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+def update_product(product_id: int, updated: schemas.ProductCreate, background_tasks: BackgroundTasks, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     product = org_filter(
         db.query(models.Product).filter(models.Product.id == product_id),
         models.Product,
@@ -408,14 +488,21 @@ def update_product(product_id: int, updated: schemas.ProductCreate, db: Session 
         product.updated_at = datetime.utcnow()
         db.commit()
         db.refresh(product)
+        
+        # Audit (background)
+        background_tasks.add_task(
+            log_action, current_user["user_id"], _org_id(current_user),
+            "UPDATE", "product", product_id
+        )
+        
         return product
     except IntegrityError:
         db.rollback()
         raise HTTPException(status_code=400, detail="Product with this SKU already exists")
 
 @router.delete("/products/{product_id}")
-def delete_product(product_id: int, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    # 🔴 RBAC: Only admins can delete products
+def delete_product(product_id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    # RBAC: Only admins can delete products
     require_role(current_user, ["admin"])
     
     product = org_filter(
@@ -427,19 +514,29 @@ def delete_product(product_id: int, db: Session = Depends(get_db), current_user:
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
 
-    # 🔴 SOFT DELETE: Mark as deleted instead of removing from DB
+    # SOFT DELETE
     product.is_deleted = True
     product.updated_at = datetime.utcnow()
     db.commit()
+    
+    # Audit (background)
+    background_tasks.add_task(
+        log_action, current_user["user_id"], _org_id(current_user),
+        "DELETE", "product", product_id
+    )
+    
     return {"message": "Product deleted"}
 
 
 # ============================================================
-# PREDICTIONS (org_filter)
+# PREDICTIONS
 # ============================================================
 @router.get("/predictions/{product_id}")
 @limiter.limit("20/minute")
 def get_prediction_insights(request: Request, product_id: int, window_size_days: int = 14, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    # 🔴 Guard: prevent predictions on deleted product
+    _check_product_not_deleted(db, product_id, current_user)
+    
     org_id = _org_id(current_user)
     try:
         result = get_product_prediction(db, org_id, product_id, window_size_days)
