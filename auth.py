@@ -100,6 +100,16 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+    # Token version check: reject tokens issued before logout/refresh
+    token_ver = payload.get("token_version")
+    db_token_ver = getattr(user, 'token_version', 0) or 0
+    if token_ver is not None and token_ver != db_token_ver:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token has been revoked",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
     return {"user_id": user.id, "email": user.email, "organization_id": user.organization_id, "role": user.role or "admin"}
 
 

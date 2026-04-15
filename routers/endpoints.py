@@ -133,8 +133,9 @@ def login(request: Request, background_tasks: BackgroundTasks, form_data: OAuth2
         
     logger.info("Password verified")
     
-    # Generate access token (15 min)
-    token_data = {"sub": user.email, "user_id": user.id}
+    # Generate access token (15 min) — include token_version for replay protection
+    tv = getattr(user, 'token_version', 0) or 0
+    token_data = {"sub": user.email, "user_id": user.id, "token_version": tv}
     access_token = create_access_token(data=token_data)
     
     # Generate refresh token (7 days)
@@ -187,8 +188,10 @@ def refresh_access_token(request: Request, body: RefreshTokenRequest, db: Sessio
     if not pwd_context.verify(body.refresh_token, user.hashed_refresh_token):
         raise HTTPException(status_code=401, detail="Refresh token revoked. Please login again.")
     
-    # 🔴 ROTATION: Issue new access AND refresh token, invalidate old refresh
-    token_data = {"sub": email, "user_id": user.id}
+    # 🔴 ROTATION: Increment token_version to invalidate ALL old tokens
+    user.token_version = (getattr(user, 'token_version', 0) or 0) + 1
+    
+    token_data = {"sub": email, "user_id": user.id, "token_version": user.token_version}
     new_access_token = create_access_token(data=token_data)
     new_refresh_token = create_refresh_token(data=token_data)
     
@@ -196,7 +199,7 @@ def refresh_access_token(request: Request, body: RefreshTokenRequest, db: Sessio
     user.hashed_refresh_token = pwd_context.hash(new_refresh_token)
     db.commit()
     
-    logger.info("Token rotation complete for user: %s", email)
+    logger.info("Token rotation complete for user: %s (v=%s)", email, user.token_version)
     
     return {
         "access_token": new_access_token,
@@ -207,12 +210,13 @@ def refresh_access_token(request: Request, body: RefreshTokenRequest, db: Sessio
 
 @router.post("/logout")
 def logout(background_tasks: BackgroundTasks, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    """Invalidate the refresh token in DB, ending the session."""
+    """Invalidate the refresh token and increment token_version to kill all sessions."""
     user = db.query(models.User).filter(models.User.id == current_user["user_id"]).first()
     if user:
         user.hashed_refresh_token = None
+        user.token_version = (getattr(user, 'token_version', 0) or 0) + 1
         db.commit()
-        logger.info("User logged out: %s", current_user["email"])
+        logger.info("User logged out: %s (token_version=%s)", current_user["email"], user.token_version)
     
     background_tasks.add_task(
         log_action, current_user["user_id"], _org_id(current_user),
@@ -544,3 +548,62 @@ def get_prediction_insights(request: Request, product_id: int, window_size_days:
     except Exception as e:
         logger.error("PREDICTION ERROR: %s", str(e))
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================
+# AUDIT LOGS (paginated, admin-only)
+# ============================================================
+@router.get("/audit-logs")
+@limiter.limit("30/minute")
+def get_audit_logs(
+    request: Request,
+    limit: int = 50,
+    offset: int = 0,
+    action: str = None,
+    entity_type: str = None,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Paginated audit log viewer. Admin-only.
+    Scoped to the caller's organization.
+    """
+    require_role(current_user, ["admin"])
+    org_id = _org_id(current_user)
+    
+    # Cap limit to prevent abuse
+    limit = min(limit, 200)
+    
+    query = db.query(models.AuditLog).filter(
+        models.AuditLog.organization_id == org_id
+    )
+    
+    # Optional filters
+    if action:
+        query = query.filter(models.AuditLog.action == action)
+    if entity_type:
+        query = query.filter(models.AuditLog.entity_type == entity_type)
+    
+    total = query.count()
+    
+    logs = query.order_by(
+        models.AuditLog.created_at.desc()
+    ).offset(offset).limit(limit).all()
+    
+    return {
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "data": [
+            {
+                "id": log.id,
+                "user_id": log.user_id,
+                "action": log.action,
+                "entity_type": log.entity_type,
+                "entity_id": log.entity_id,
+                "details": log.details,
+                "created_at": log.created_at.isoformat() if log.created_at else None
+            }
+            for log in logs
+        ]
+    }
