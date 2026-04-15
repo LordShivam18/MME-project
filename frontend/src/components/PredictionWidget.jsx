@@ -41,8 +41,8 @@ export default function PredictionWidget({ shopId, productId, onReorder }) {
     <div style={{ padding: '1rem', border: '1px solid #ccc', borderRadius: '8px', background: isHealthy ? '#e7f9eb' : '#fff3cd' }}>
       <h4 style={{ margin: '0 0 0.5rem 0' }}>Demand Logic Engine</h4>
       <p style={{ margin: '0.2rem 0' }}><strong>Action:</strong> <span style={{ color: isHealthy ? 'green' : 'red' }}>{prediction.prediction}</span></p>
-      <p style={{ margin: '0.2rem 0' }}>Est. Daily Sales: {(prediction?.estimated_daily_sales ?? 0).toFixed(2)}</p>
-      <p style={{ margin: '0.2rem 0' }}>Target Safety Buffer: {(prediction?.target_safety_buffer ?? 0).toFixed(0)}</p>
+      <p style={{ margin: '0.2rem 0' }}>Est. Daily Sales: {(Number(prediction?.estimated_daily_sales || 0)).toFixed(2)}</p>
+      <p style={{ margin: '0.2rem 0' }}>Target Safety Buffer: {(Number(prediction?.target_safety_buffer || 0)).toFixed(0)}</p>
       {prediction?.reorder_now && (
         <button onClick={() => onReorder && onReorder(productId, prediction?.target_safety_buffer)} style={{ backgroundColor: "red", color: "white", padding: "0.4rem 0.8rem", border: "none", borderRadius: "4px", marginTop: "0.5rem", cursor: "pointer", fontWeight: 'bold', display: 'block' }}>
           Reorder Now

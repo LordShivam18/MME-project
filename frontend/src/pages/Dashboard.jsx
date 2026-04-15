@@ -12,8 +12,10 @@ export default function Dashboard() {
     const fetchMe = async () => {
       try {
         const res = await axiosClient.get('/api/v1/me');
-        setUser(res.data.user);
+        setUser(res.data?.user || null);
       } catch (err) {
+        console.error(err);
+        setUser(null);
         setError("Unable to load user session.");
       } finally {
         setIsLoading(false);

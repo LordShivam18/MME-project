@@ -29,9 +29,10 @@ export default function ProductManager() {
     try {
       // Cleaned up query logic since shop_id is automatically pulled via backend tokens securely
       const res = await axiosClient.get(`/api/v1/products/?limit=50`);
-      setProducts(res.data);
+      setProducts(res.data || []);
     } catch (err) {
       console.error(err);
+      setProducts([]);
     } finally {
       setIsLoading(false);
     }
@@ -159,6 +160,8 @@ export default function ProductManager() {
       setIsLoading(false);
     }
   };
+
+  if (!products) return <p>Loading...</p>;
 
   return (
     <div style={{ fontFamily: 'sans-serif', maxWidth: '1200px', margin: '0 auto', padding: '1rem' }}>

@@ -16,8 +16,10 @@ export default function Inventory() {
     setIsLoading(true);
     try {
       const res = await axiosClient.get(`/api/v1/inventory/summary?shop_id=${shopId}&limit=100`);
-      setSummaryData(res.data);
+      setSummaryData(res.data || []);
     } catch (err) {
+      console.error(err);
+      setSummaryData([]);
       setError("Failed to load inventory data. Check backend connection.");
     } finally {
       setIsLoading(false);
@@ -43,6 +45,8 @@ export default function Inventory() {
       setIsLoading(false);
     }
   };
+
+  if (!summaryData) return <p>Loading...</p>;
 
   return (
     <div style={{ fontFamily: 'sans-serif', maxWidth: '1200px', margin: '0 auto', padding: '1rem' }}>
