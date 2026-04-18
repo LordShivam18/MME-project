@@ -60,8 +60,11 @@ async def lifespan(app: FastAPI):
             # --- Sales table ---
             conn.execute(text("ALTER TABLE sales ADD COLUMN IF NOT EXISTS created_at TIMESTAMP"))
             conn.execute(text("ALTER TABLE sales ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP"))
+            # --- AuditLog indexes for pagination performance ---
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_audit_org_created ON audit_logs (organization_id, created_at)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_audit_org_action ON audit_logs (organization_id, action)"))
             conn.commit()
-        logger.info("Migration check complete: all columns ensured")
+        logger.info("Migration check complete: all columns and indexes ensured")
     except Exception as e:
         logger.warning("Migration note: %s", str(e))
     

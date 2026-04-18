@@ -106,12 +106,17 @@ class AuditLog(Base):
     __tablename__ = "audit_logs"
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, nullable=False)
-    organization_id = Column(Integer, nullable=False)
+    organization_id = Column(Integer, nullable=False, index=True)
     action = Column(String, nullable=False)
     entity_type = Column(String, nullable=False)
     entity_id = Column(Integer, nullable=True)
     details = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        Index('ix_audit_org_created', 'organization_id', 'created_at'),
+        Index('ix_audit_org_action', 'organization_id', 'action'),
+    )
 
 
 class Subscription(Base):

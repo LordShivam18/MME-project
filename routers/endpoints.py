@@ -83,7 +83,7 @@ def log_action(user_id: int, organization_id: int, action: str, entity_type: str
         db.commit()
         logger.info("AUDIT: user=%s action=%s entity=%s:%s", user_id, action, entity_type, entity_id)
     except Exception as e:
-        logger.warning("AUDIT LOG FAILED: %s", str(e))
+        logger.error("AUDIT LOG FAILED: %s", str(e), exc_info=True)
         db.rollback()
     finally:
         db.close()
