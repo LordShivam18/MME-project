@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Request, BackgroundTasks
 from sqlalchemy.orm import Session, Query
 from sqlalchemy.exc import IntegrityError
-from typing import List
+from typing import List, Optional
 import logging
 import os
 from datetime import datetime, timedelta
@@ -134,7 +134,7 @@ def check_subscription_active(db: Session, org_id: int):
     """
     Verify the org has an active subscription.
     Free plan is always active. Pro plan checks expiry.
-    Raises 403 if expired.
+    Raises 403 if expired. Auto-marks expired subscriptions and logs the event.
     """
     sub = _get_subscription(db, org_id)
     if not sub:
@@ -151,9 +151,25 @@ def check_subscription_active(db: Session, org_id: int):
     if sub.expiry_date and sub.expiry_date < datetime.utcnow():
         sub.status = "expired"
         db.commit()
+        # Audit: auto-expiry event (fire-and-forget, own session)
+        logger.warning("Subscription auto-expired for org=%s plan=%s", org_id, sub.plan)
+        try:
+            log_action(0, org_id, "SUBSCRIPTION_EXPIRED", "subscription", sub.id,
+                       f"Plan '{sub.plan}' auto-expired at {sub.expiry_date.isoformat()}")
+        except Exception:
+            pass  # log_action already handles its own errors
         raise HTTPException(status_code=403, detail="Subscription expired. Please renew to continue.")
     
     return sub.plan
+
+
+def require_active_subscription(db: Session, org_id: int) -> str:
+    """
+    Gate for ALL write operations. Checks subscription is active
+    and returns the current plan name.
+    Raises 403 if subscription is expired or inactive.
+    """
+    return check_subscription_active(db, org_id)
 
 
 def check_plan_limit(db: Session, org_id: int, resource: str):
@@ -423,6 +439,9 @@ def record_sale(payload: schemas.SalesCreate, background_tasks: BackgroundTasks,
     try:
         org_id = _org_id(current_user)
 
+        # 🔴 SaaS: Subscription gate
+        require_active_subscription(db, org_id)
+
         # 🔴 Guard: prevent sale on deleted product
         _check_product_not_deleted(db, payload.product_id, current_user)
 
@@ -495,6 +514,9 @@ def get_sales_history(product_id: int, db: Session = Depends(get_db), current_us
 @router.post("/inventory/add-stock")
 def add_stock(payload: schemas.AddStockRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     org_id = _org_id(current_user)
+    
+    # 🔴 SaaS: Subscription gate
+    require_active_subscription(db, org_id)
     
     # 🔴 Guard: prevent stock ops on deleted product
     _check_product_not_deleted(db, payload.product_id, current_user)
@@ -571,6 +593,11 @@ def get_inventory(request: Request, product_id: int, db: Session = Depends(get_d
 # ============================================================
 @router.put("/products/{product_id}")
 def update_product(product_id: int, updated: schemas.ProductCreate, background_tasks: BackgroundTasks, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    org_id = _org_id(current_user)
+    
+    # 🔴 SaaS: Subscription gate
+    require_active_subscription(db, org_id)
+    
     product = org_filter(
         db.query(models.Product).filter(models.Product.id == product_id),
         models.Product,
@@ -602,6 +629,10 @@ def update_product(product_id: int, updated: schemas.ProductCreate, background_t
 def delete_product(product_id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     # RBAC: Only admins can delete products
     require_role(current_user, ["admin"])
+    org_id = _org_id(current_user)
+    
+    # 🔴 SaaS: Subscription gate
+    require_active_subscription(db, org_id)
     
     product = org_filter(
         db.query(models.Product).filter(models.Product.id == product_id),
@@ -632,10 +663,13 @@ def delete_product(product_id: int, background_tasks: BackgroundTasks, db: Sessi
 @router.get("/predictions/{product_id}")
 @limiter.limit("20/minute")
 def get_prediction_insights(request: Request, product_id: int, window_size_days: int = 14, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    org_id = _org_id(current_user)
+    
+    # 🔴 SaaS: Subscription gate (predictions require active plan)
+    require_active_subscription(db, org_id)
+    
     # 🔴 Guard: prevent predictions on deleted product
     _check_product_not_deleted(db, product_id, current_user)
-    
-    org_id = _org_id(current_user)
     try:
         result = get_product_prediction(db, org_id, product_id, window_size_days)
         return result
@@ -739,6 +773,59 @@ def upgrade_plan(request: Request, body: BillingUpgradeRequest, background_tasks
     return {"message": "Successfully upgraded to Pro plan!", "plan": "pro", "expiry": sub.expiry_date}
 
 
+@router.post("/billing/downgrade")
+@limiter.limit("5/minute")
+def downgrade_plan(request: Request, background_tasks: BackgroundTasks, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    """
+    Downgrade to free plan. Existing resources are preserved (read/update/delete allowed),
+    but new resource creation is blocked once free-plan limits are exceeded.
+    """
+    require_role(current_user, ["admin"])
+    org_id = _org_id(current_user)
+
+    sub = _get_subscription(db, org_id)
+    if not sub or sub.plan == "free":
+        raise HTTPException(status_code=400, detail="Already on the free plan.")
+
+    old_plan = sub.plan
+    sub.plan = "free"
+    sub.status = "active"
+    sub.expiry_date = None
+    db.commit()
+
+    # Check if existing resources exceed free limits (warn but don't delete)
+    product_count = db.query(models.Product).filter(
+        models.Product.shop_id == org_id,
+        models.Product.is_deleted == False
+    ).count()
+    user_count = db.query(models.User).filter(
+        models.User.organization_id == org_id,
+        models.User.is_deleted == False
+    ).count()
+
+    free_limits = PLAN_LIMITS["free"]
+    warnings = []
+    if free_limits["max_products"] and product_count > free_limits["max_products"]:
+        warnings.append(f"Products: {product_count}/{free_limits['max_products']} (new creation blocked until under limit)")
+    if free_limits["max_users"] and user_count > free_limits["max_users"]:
+        warnings.append(f"Users: {user_count}/{free_limits['max_users']} (new invites blocked until under limit)")
+
+    background_tasks.add_task(
+        log_action, current_user["user_id"], org_id,
+        "DOWNGRADE", "subscription", sub.id, f"Downgraded from {old_plan} to free"
+    )
+
+    result = {
+        "message": f"Downgraded from {old_plan} to free plan.",
+        "plan": "free",
+        "note": "Existing resources are preserved. New creation is blocked if limits are exceeded."
+    }
+    if warnings:
+        result["warnings"] = warnings
+
+    return result
+
+
 @router.post("/billing/webhook")
 async def billing_webhook(request: Request, db: Session = Depends(get_db)):
     """
@@ -754,14 +841,29 @@ async def billing_webhook(request: Request, db: Session = Depends(get_db)):
 
 @router.get("/billing/status")
 def get_billing_status(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    """Return current plan name and limits."""
+    """Return current plan name, limits, and current usage counts."""
     org_id = _org_id(current_user)
     sub = _get_subscription(db, org_id)
     plan = sub.plan if sub else "free"
-    
+    limits = PLAN_LIMITS.get(plan, PLAN_LIMITS["free"])
+
+    # Current usage for limit-aware resources
+    product_count = db.query(models.Product).filter(
+        models.Product.shop_id == org_id,
+        models.Product.is_deleted == False
+    ).count()
+    user_count = db.query(models.User).filter(
+        models.User.organization_id == org_id,
+        models.User.is_deleted == False
+    ).count()
+
     return {
         "plan": plan,
         "status": sub.status if sub else "active",
-        "limits": PLAN_LIMITS.get(plan),
-        "expiry": sub.expiry_date if sub else None
+        "limits": limits,
+        "usage": {
+            "products": product_count,
+            "users": user_count
+        },
+        "expiry": sub.expiry_date.isoformat() if sub and sub.expiry_date else None
     }
