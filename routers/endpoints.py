@@ -775,11 +775,17 @@ def create_checkout_session(request: Request, background_tasks: BackgroundTasks,
         existing_customer_id=existing_cid
     )
 
-    # Persist customer_id immediately
+    # Persist customer_id to both Subscription and Organization
     if not sub:
         sub = models.Subscription(organization_id=org_id)
         db.add(sub)
     sub.stripe_customer_id = customer_id
+
+    # Also store on Organization for direct lookup
+    org = db.query(models.Organization).filter(models.Organization.id == org_id).first()
+    if org:
+        org.stripe_customer_id = customer_id
+
     db.commit()
 
     # Create checkout session
@@ -854,7 +860,10 @@ def downgrade_plan(request: Request, background_tasks: BackgroundTasks, db: Sess
     """
     Downgrade to free plan. Existing resources are preserved (read/update/delete allowed),
     but new resource creation is blocked once free-plan limits are exceeded.
+    If Stripe is active, cancels the Stripe subscription.
     """
+    from services.stripe_service import is_stripe_configured
+
     require_role(current_user, ["admin"])
     org_id = _org_id(current_user)
 
@@ -863,9 +872,21 @@ def downgrade_plan(request: Request, background_tasks: BackgroundTasks, db: Sess
         raise HTTPException(status_code=400, detail="Already on the free plan.")
 
     old_plan = sub.plan
+
+    # If Stripe is configured and there's an active Stripe subscription, cancel it
+    if is_stripe_configured() and sub.stripe_subscription_id:
+        import stripe as stripe_lib
+        try:
+            stripe_lib.Subscription.cancel(sub.stripe_subscription_id)
+            logger.info("Cancelled Stripe subscription %s for org=%s", sub.stripe_subscription_id, org_id)
+        except Exception as e:
+            logger.error("Failed to cancel Stripe subscription %s: %s", sub.stripe_subscription_id, str(e))
+            # Continue with local downgrade even if Stripe cancel fails
+
     sub.plan = "free"
     sub.status = "active"
     sub.expiry_date = None
+    sub.stripe_subscription_id = None  # Clear Stripe sub reference
     db.commit()
 
     # Check if existing resources exceed free limits (warn but don't delete)
@@ -904,9 +925,10 @@ def downgrade_plan(request: Request, background_tasks: BackgroundTasks, db: Sess
 @router.post("/billing/webhook")
 async def billing_webhook(request: Request, db: Session = Depends(get_db)):
     """
-    Stripe Webhook handler with signature verification.
+    Stripe Webhook handler with signature verification and idempotency.
+    Deduplicates events via stripe_events table.
     Processes: checkout.session.completed, invoice.payment_succeeded,
-    invoice.payment_failed, customer.subscription.updated/deleted.
+    invoice.payment_failed, customer.subscription.updated/created/deleted.
     Falls back to stub response if Stripe is not configured.
     """
     from services.stripe_service import is_stripe_configured, verify_webhook_signature, extract_subscription_data
@@ -927,21 +949,40 @@ async def billing_webhook(request: Request, db: Session = Depends(get_db)):
         logger.error("Webhook signature verification failed: %s", str(e))
         raise HTTPException(status_code=400, detail=str(e))
 
+    event_id = event.get("id")
     event_type = event["type"]
-    logger.info("Stripe webhook received: %s", event_type)
+    logger.info("Stripe webhook received: %s (id=%s)", event_type, event_id)
+
+    # ── IDEMPOTENCY CHECK ──
+    if event_id:
+        existing_event = db.query(models.StripeEvent).filter(
+            models.StripeEvent.event_id == event_id
+        ).first()
+        if existing_event:
+            logger.info("Duplicate Stripe event %s, skipping", event_id)
+            return {"status": "duplicate", "event_id": event_id}
 
     # Extract normalized data from event
     event_data = extract_subscription_data(event)
     org_id_str = event_data.get("org_id")
 
-    # Resolve org_id: try metadata first, then look up by stripe_customer_id
+    # ── MULTI-LAYER ORG RESOLUTION ──
+    # Layer 1: metadata.org_id from Stripe event
     org_id = None
     if org_id_str:
         try:
             org_id = int(org_id_str)
+            # Validate org actually exists
+            org_exists = db.query(models.Organization).filter(
+                models.Organization.id == org_id
+            ).first()
+            if not org_exists:
+                logger.warning("Webhook org_id=%s from metadata does not exist in DB", org_id)
+                org_id = None
         except (ValueError, TypeError):
             pass
 
+    # Layer 2: Look up by stripe_customer_id in Subscription table
     if not org_id and event_data.get("stripe_customer_id"):
         sub_lookup = db.query(models.Subscription).filter(
             models.Subscription.stripe_customer_id == event_data["stripe_customer_id"]
@@ -949,11 +990,26 @@ async def billing_webhook(request: Request, db: Session = Depends(get_db)):
         if sub_lookup:
             org_id = sub_lookup.organization_id
 
+    # Layer 3: Look up by stripe_customer_id in Organization table
+    if not org_id and event_data.get("stripe_customer_id"):
+        org_lookup = db.query(models.Organization).filter(
+            models.Organization.stripe_customer_id == event_data["stripe_customer_id"]
+        ).first()
+        if org_lookup:
+            org_id = org_lookup.id
+
     if not org_id:
-        logger.warning("Webhook event %s: could not resolve org_id, skipping", event_type)
+        logger.warning("Webhook event %s (id=%s): could not resolve org_id, skipping", event_type, event_id)
+        # Still record the event for audit trail
+        if event_id:
+            db.add(models.StripeEvent(
+                event_id=event_id, event_type=event_type,
+                status="skipped", details="org_id not resolvable"
+            ))
+            db.commit()
         return {"status": "skipped", "reason": "org_id not resolvable"}
 
-    # --- Process event ---
+    # ── FILTER HANDLED EVENTS ──
     HANDLED_EVENTS = {
         "checkout.session.completed",
         "invoice.payment_succeeded",
@@ -965,9 +1021,15 @@ async def billing_webhook(request: Request, db: Session = Depends(get_db)):
 
     if event_type not in HANDLED_EVENTS:
         logger.info("Webhook event %s not handled, acknowledging", event_type)
+        if event_id:
+            db.add(models.StripeEvent(
+                event_id=event_id, event_type=event_type,
+                organization_id=org_id, status="acknowledged"
+            ))
+            db.commit()
         return {"status": "acknowledged", "event": event_type}
 
-    # Update subscription
+    # ── UPDATE SUBSCRIPTION ──
     sub = _get_subscription(db, org_id)
     if not sub:
         sub = models.Subscription(organization_id=org_id)
@@ -975,6 +1037,11 @@ async def billing_webhook(request: Request, db: Session = Depends(get_db)):
 
     if event_data["stripe_customer_id"]:
         sub.stripe_customer_id = event_data["stripe_customer_id"]
+        # Sync to Organization model
+        org = db.query(models.Organization).filter(models.Organization.id == org_id).first()
+        if org and not org.stripe_customer_id:
+            org.stripe_customer_id = event_data["stripe_customer_id"]
+
     if event_data["stripe_subscription_id"]:
         sub.stripe_subscription_id = event_data["stripe_subscription_id"]
 
@@ -987,10 +1054,22 @@ async def billing_webhook(request: Request, db: Session = Depends(get_db)):
             sub.expiry_date = event_data["expiry_date"]
         elif not sub.expiry_date:
             sub.expiry_date = datetime.utcnow() + timedelta(days=30)
-    elif plan_status == "expired":
-        sub.status = "expired"
 
-    # Store payment metadata
+    elif plan_status == "expired":
+        # Handle cancellation vs payment failure
+        if event_type == "customer.subscription.deleted":
+            # Full cancellation: downgrade to free, clear Stripe ref
+            sub.plan = "free"
+            sub.status = "active"
+            sub.expiry_date = None
+            sub.stripe_subscription_id = None
+            logger.info("Subscription cancelled via Stripe for org=%s, downgraded to free", org_id)
+        else:
+            # Payment failure or other expiry: mark expired, keep plan for grace period
+            sub.status = "expired"
+            logger.info("Subscription expired for org=%s via %s", org_id, event_type)
+
+    # ── STORE PAYMENT METADATA ──
     if event_data.get("payment_intent_id"):
         existing_payment = db.query(models.Payment).filter(
             models.Payment.stripe_payment_intent_id == event_data["payment_intent_id"]
@@ -1006,6 +1085,7 @@ async def billing_webhook(request: Request, db: Session = Depends(get_db)):
                 plan="pro",
                 metadata_json=json.dumps({
                     "event_type": event_type,
+                    "event_id": event_id,
                     "stripe_subscription_id": event_data.get("stripe_subscription_id"),
                 })
             )
@@ -1029,29 +1109,39 @@ async def billing_webhook(request: Request, db: Session = Depends(get_db)):
                 pending_payment.currency = event_data.get("currency")
                 pending_payment.updated_at = datetime.utcnow()
 
+    # ── RECORD IDEMPOTENCY EVENT ──
+    if event_id:
+        db.add(models.StripeEvent(
+            event_id=event_id,
+            event_type=event_type,
+            organization_id=org_id,
+            status="processed",
+            details=f"plan_status={plan_status}, amount={event_data.get('amount')}"
+        ))
+
     db.commit()
 
-    # Audit log (fire-and-forget)
+    # ── AUDIT LOG ──
     audit_action = {
         "checkout.session.completed": "STRIPE_CHECKOUT_COMPLETED",
         "invoice.payment_succeeded": "STRIPE_PAYMENT_SUCCEEDED",
         "invoice.payment_failed": "STRIPE_PAYMENT_FAILED",
         "customer.subscription.updated": "STRIPE_SUBSCRIPTION_UPDATED",
         "customer.subscription.created": "STRIPE_SUBSCRIPTION_CREATED",
-        "customer.subscription.deleted": "STRIPE_SUBSCRIPTION_DELETED",
+        "customer.subscription.deleted": "STRIPE_SUBSCRIPTION_CANCELLED",
     }.get(event_type, f"STRIPE_{event_type.upper()}")
 
     try:
         log_action(
             0, org_id, audit_action, "subscription",
             sub.id if sub.id else None,
-            f"Stripe event: {event_type}, status={plan_status}, amount={event_data.get('amount')}"
+            f"Stripe event: {event_type} (id={event_id}), status={plan_status}, amount={event_data.get('amount')}"
         )
     except Exception:
         pass  # log_action handles its own errors
 
-    logger.info("Webhook processed: %s for org=%s status=%s", event_type, org_id, plan_status)
-    return {"status": "processed", "event": event_type}
+    logger.info("Webhook processed: %s (id=%s) for org=%s status=%s", event_type, event_id, org_id, plan_status)
+    return {"status": "processed", "event": event_type, "event_id": event_id}
 
 
 @router.get("/billing/status")

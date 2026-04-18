@@ -63,8 +63,23 @@ async def lifespan(app: FastAPI):
             # --- AuditLog indexes for pagination performance ---
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_audit_org_created ON audit_logs (organization_id, created_at)"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_audit_org_action ON audit_logs (organization_id, action)"))
+            # --- Organizations: Stripe customer link ---
+            conn.execute(text("ALTER TABLE organizations ADD COLUMN IF NOT EXISTS stripe_customer_id VARCHAR"))
+            # --- Stripe events idempotency table ---
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS stripe_events (
+                    id SERIAL PRIMARY KEY,
+                    event_id VARCHAR UNIQUE NOT NULL,
+                    event_type VARCHAR NOT NULL,
+                    organization_id INTEGER REFERENCES organizations(id),
+                    status VARCHAR NOT NULL DEFAULT 'processed',
+                    details VARCHAR,
+                    created_at TIMESTAMP DEFAULT NOW()
+                )
+            """))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_stripe_events_event_id ON stripe_events (event_id)"))
             conn.commit()
-        logger.info("Migration check complete: all columns and indexes ensured")
+        logger.info("Migration check complete: all columns, indexes, and tables ensured")
     except Exception as e:
         logger.warning("Migration note: %s", str(e))
     

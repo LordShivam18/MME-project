@@ -8,6 +8,7 @@ class Organization(Base):
     __tablename__ = "organizations"
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, nullable=False)
+    stripe_customer_id = Column(String, nullable=True, unique=True, index=True)
     is_deleted = Column(Boolean, default=False, nullable=False, server_default="false")
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -19,6 +20,7 @@ class Organization(Base):
     sales = relationship("Sale", back_populates="organization")
     subscription = relationship("Subscription", back_populates="organization", uselist=False)
     payments = relationship("Payment", back_populates="organization")
+    stripe_events = relationship("StripeEvent", back_populates="organization")
 
 
 class User(Base):
@@ -152,3 +154,18 @@ class Payment(Base):
 
     # Relationships
     organization = relationship("Organization", back_populates="payments")
+
+
+class StripeEvent(Base):
+    """Webhook idempotency table. Stores processed Stripe event IDs to prevent duplicate processing."""
+    __tablename__ = "stripe_events"
+    id = Column(Integer, primary_key=True, index=True)
+    event_id = Column(String, unique=True, nullable=False, index=True)  # Stripe event ID (evt_...)
+    event_type = Column(String, nullable=False)
+    organization_id = Column(Integer, ForeignKey("organizations.id"), index=True, nullable=True)
+    status = Column(String, default="processed", nullable=False)  # processed, failed
+    details = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    # Relationships
+    organization = relationship("Organization", back_populates="stripe_events")
