@@ -7,6 +7,7 @@ import os
 from datetime import datetime, timedelta
 from pydantic import BaseModel
 from functools import wraps
+import json
 
 from database import get_db, SessionLocal
 from models import core as models
@@ -736,30 +737,104 @@ def get_audit_logs(
         ]
     }
 # ============================================================
-# 🔴 BILLING SYSTEM (Stripe/Razorpay Ready)
+# 🔴 BILLING SYSTEM (Stripe Integrated)
 # ============================================================
 
 class BillingUpgradeRequest(BaseModel):
     plan: str  # "pro"
 
+
+@router.post("/billing/create-checkout-session")
+@limiter.limit("5/minute")
+def create_checkout_session(request: Request, background_tasks: BackgroundTasks, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    """
+    Create a Stripe Checkout Session for Pro plan.
+    Returns checkout URL for frontend redirect.
+    Requires Stripe environment variables to be configured.
+    """
+    from services.stripe_service import is_stripe_configured, get_or_create_customer, create_checkout_session as stripe_create_session
+
+    require_role(current_user, ["admin"])
+    org_id = _org_id(current_user)
+
+    if not is_stripe_configured():
+        raise HTTPException(
+            status_code=503,
+            detail="Stripe is not configured. Set STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, and STRIPE_PRICE_ID_PRO."
+        )
+
+    sub = _get_subscription(db, org_id)
+    if sub and sub.plan == "pro" and sub.status == "active":
+        raise HTTPException(status_code=400, detail="Already on Pro plan with active subscription.")
+
+    # Get or create Stripe customer
+    existing_cid = sub.stripe_customer_id if sub else None
+    customer_id = get_or_create_customer(
+        email=current_user["email"],
+        org_id=org_id,
+        existing_customer_id=existing_cid
+    )
+
+    # Persist customer_id immediately
+    if not sub:
+        sub = models.Subscription(organization_id=org_id)
+        db.add(sub)
+    sub.stripe_customer_id = customer_id
+    db.commit()
+
+    # Create checkout session
+    session_data = stripe_create_session(customer_id, org_id)
+
+    # Store pending payment record
+    payment = models.Payment(
+        organization_id=org_id,
+        stripe_checkout_session_id=session_data["session_id"],
+        status="pending",
+        plan="pro"
+    )
+    db.add(payment)
+    db.commit()
+
+    background_tasks.add_task(
+        log_action, current_user["user_id"], org_id,
+        "CHECKOUT_CREATED", "subscription", sub.id, f"Stripe session: {session_data['session_id']}"
+    )
+
+    return {
+        "checkout_url": session_data["checkout_url"],
+        "session_id": session_data["session_id"]
+    }
+
+
 @router.post("/billing/upgrade")
 @limiter.limit("5/minute")
 def upgrade_plan(request: Request, body: BillingUpgradeRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     """
-    Simulated upgrade to Pro plan.
-    In production, this would redirect to Stripe/Razorpay checkout.
+    Upgrade to Pro plan.
+    If Stripe is configured, redirects to create-checkout-session flow.
+    Otherwise, applies simulated upgrade (for dev/testing).
     """
+    from services.stripe_service import is_stripe_configured
+
     require_role(current_user, ["admin"])
     org_id = _org_id(current_user)
-    
+
     if body.plan != "pro":
         raise HTTPException(status_code=400, detail="Invalid plan selected")
 
+    # If Stripe is configured, direct users to the checkout flow
+    if is_stripe_configured():
+        return {
+            "message": "Stripe is configured. Use POST /billing/create-checkout-session instead.",
+            "redirect": "/api/v1/billing/create-checkout-session"
+        }
+
+    # Simulated upgrade fallback (dev/testing only)
     sub = _get_subscription(db, org_id)
     if not sub:
         sub = models.Subscription(organization_id=org_id)
         db.add(sub)
-    
+
     sub.plan = "pro"
     sub.status = "active"
     sub.expiry_date = datetime.utcnow() + timedelta(days=30)
@@ -767,7 +842,7 @@ def upgrade_plan(request: Request, body: BillingUpgradeRequest, background_tasks
 
     background_tasks.add_task(
         log_action, current_user["user_id"], org_id,
-        "UPGRADE", "subscription", sub.id, f"Upgraded to {body.plan}"
+        "UPGRADE", "subscription", sub.id, f"Simulated upgrade to {body.plan}"
     )
 
     return {"message": "Successfully upgraded to Pro plan!", "plan": "pro", "expiry": sub.expiry_date}
@@ -829,14 +904,154 @@ def downgrade_plan(request: Request, background_tasks: BackgroundTasks, db: Sess
 @router.post("/billing/webhook")
 async def billing_webhook(request: Request, db: Session = Depends(get_db)):
     """
-    Stripe/Razorpay Webhook listener stub.
-    Security: Verify signature in production!
+    Stripe Webhook handler with signature verification.
+    Processes: checkout.session.completed, invoice.payment_succeeded,
+    invoice.payment_failed, customer.subscription.updated/deleted.
+    Falls back to stub response if Stripe is not configured.
     """
-    # Pseudo-logic for handling payment success
-    # 1. Verify webhook signature
-    # 2. Extract org_id and event type
-    # 3. Update subscription status in DB
-    return {"status": "webhook_received"}
+    from services.stripe_service import is_stripe_configured, verify_webhook_signature, extract_subscription_data
+
+    if not is_stripe_configured():
+        return {"status": "webhook_received", "note": "Stripe not configured, ignoring"}
+
+    # Read raw body for signature verification
+    payload = await request.body()
+    sig_header = request.headers.get("stripe-signature", "")
+
+    if not sig_header:
+        raise HTTPException(status_code=400, detail="Missing Stripe signature header")
+
+    try:
+        event = verify_webhook_signature(payload, sig_header)
+    except ValueError as e:
+        logger.error("Webhook signature verification failed: %s", str(e))
+        raise HTTPException(status_code=400, detail=str(e))
+
+    event_type = event["type"]
+    logger.info("Stripe webhook received: %s", event_type)
+
+    # Extract normalized data from event
+    event_data = extract_subscription_data(event)
+    org_id_str = event_data.get("org_id")
+
+    # Resolve org_id: try metadata first, then look up by stripe_customer_id
+    org_id = None
+    if org_id_str:
+        try:
+            org_id = int(org_id_str)
+        except (ValueError, TypeError):
+            pass
+
+    if not org_id and event_data.get("stripe_customer_id"):
+        sub_lookup = db.query(models.Subscription).filter(
+            models.Subscription.stripe_customer_id == event_data["stripe_customer_id"]
+        ).first()
+        if sub_lookup:
+            org_id = sub_lookup.organization_id
+
+    if not org_id:
+        logger.warning("Webhook event %s: could not resolve org_id, skipping", event_type)
+        return {"status": "skipped", "reason": "org_id not resolvable"}
+
+    # --- Process event ---
+    HANDLED_EVENTS = {
+        "checkout.session.completed",
+        "invoice.payment_succeeded",
+        "invoice.payment_failed",
+        "customer.subscription.updated",
+        "customer.subscription.created",
+        "customer.subscription.deleted",
+    }
+
+    if event_type not in HANDLED_EVENTS:
+        logger.info("Webhook event %s not handled, acknowledging", event_type)
+        return {"status": "acknowledged", "event": event_type}
+
+    # Update subscription
+    sub = _get_subscription(db, org_id)
+    if not sub:
+        sub = models.Subscription(organization_id=org_id)
+        db.add(sub)
+
+    if event_data["stripe_customer_id"]:
+        sub.stripe_customer_id = event_data["stripe_customer_id"]
+    if event_data["stripe_subscription_id"]:
+        sub.stripe_subscription_id = event_data["stripe_subscription_id"]
+
+    plan_status = event_data.get("plan_status")
+
+    if plan_status == "active":
+        sub.plan = "pro"
+        sub.status = "active"
+        if event_data.get("expiry_date"):
+            sub.expiry_date = event_data["expiry_date"]
+        elif not sub.expiry_date:
+            sub.expiry_date = datetime.utcnow() + timedelta(days=30)
+    elif plan_status == "expired":
+        sub.status = "expired"
+
+    # Store payment metadata
+    if event_data.get("payment_intent_id"):
+        existing_payment = db.query(models.Payment).filter(
+            models.Payment.stripe_payment_intent_id == event_data["payment_intent_id"]
+        ).first()
+
+        if not existing_payment:
+            payment = models.Payment(
+                organization_id=org_id,
+                stripe_payment_intent_id=event_data["payment_intent_id"],
+                amount=event_data.get("amount"),
+                currency=event_data.get("currency"),
+                status="succeeded" if plan_status == "active" else "failed",
+                plan="pro",
+                metadata_json=json.dumps({
+                    "event_type": event_type,
+                    "stripe_subscription_id": event_data.get("stripe_subscription_id"),
+                })
+            )
+            db.add(payment)
+        else:
+            existing_payment.status = "succeeded" if plan_status == "active" else "failed"
+            existing_payment.updated_at = datetime.utcnow()
+
+    # Update checkout session payment record if this is a checkout completion
+    if event_type == "checkout.session.completed":
+        checkout_session_id = event["data"]["object"].get("id")
+        if checkout_session_id:
+            pending_payment = db.query(models.Payment).filter(
+                models.Payment.stripe_checkout_session_id == checkout_session_id,
+                models.Payment.status == "pending"
+            ).first()
+            if pending_payment:
+                pending_payment.status = "succeeded"
+                pending_payment.stripe_payment_intent_id = event_data.get("payment_intent_id")
+                pending_payment.amount = event_data.get("amount")
+                pending_payment.currency = event_data.get("currency")
+                pending_payment.updated_at = datetime.utcnow()
+
+    db.commit()
+
+    # Audit log (fire-and-forget)
+    audit_action = {
+        "checkout.session.completed": "STRIPE_CHECKOUT_COMPLETED",
+        "invoice.payment_succeeded": "STRIPE_PAYMENT_SUCCEEDED",
+        "invoice.payment_failed": "STRIPE_PAYMENT_FAILED",
+        "customer.subscription.updated": "STRIPE_SUBSCRIPTION_UPDATED",
+        "customer.subscription.created": "STRIPE_SUBSCRIPTION_CREATED",
+        "customer.subscription.deleted": "STRIPE_SUBSCRIPTION_DELETED",
+    }.get(event_type, f"STRIPE_{event_type.upper()}")
+
+    try:
+        log_action(
+            0, org_id, audit_action, "subscription",
+            sub.id if sub.id else None,
+            f"Stripe event: {event_type}, status={plan_status}, amount={event_data.get('amount')}"
+        )
+    except Exception:
+        pass  # log_action handles its own errors
+
+    logger.info("Webhook processed: %s for org=%s status=%s", event_type, org_id, plan_status)
+    return {"status": "processed", "event": event_type}
 
 
 @router.get("/billing/status")

@@ -18,6 +18,7 @@ class Organization(Base):
     inventory = relationship("Inventory", back_populates="organization")
     sales = relationship("Sale", back_populates="organization")
     subscription = relationship("Subscription", back_populates="organization", uselist=False)
+    payments = relationship("Payment", back_populates="organization")
 
 
 class User(Base):
@@ -133,3 +134,21 @@ class Subscription(Base):
 
     # Relationships
     organization = relationship("Organization", back_populates="subscription")
+
+
+class Payment(Base):
+    __tablename__ = "payments"
+    id = Column(Integer, primary_key=True, index=True)
+    organization_id = Column(Integer, ForeignKey("organizations.id"), index=True, nullable=False)
+    stripe_payment_intent_id = Column(String, nullable=True, unique=True)
+    stripe_checkout_session_id = Column(String, nullable=True)
+    amount = Column(Integer, nullable=True)  # in smallest currency unit (cents/paise)
+    currency = Column(String, default="usd", nullable=True)
+    status = Column(String, default="pending", nullable=False, server_default="pending")  # pending, succeeded, failed
+    plan = Column(String, nullable=True)
+    metadata_json = Column(String, nullable=True)  # JSON string for extra Stripe metadata
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Relationships
+    organization = relationship("Organization", back_populates="payments")

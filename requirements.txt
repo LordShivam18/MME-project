@@ -12,3 +12,4 @@ python-multipart==0.0.9
 gunicorn==21.2.0
 pandas
 numpy
+stripe>=8.0.0
