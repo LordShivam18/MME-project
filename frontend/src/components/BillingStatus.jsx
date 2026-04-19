@@ -35,7 +35,14 @@ export default function BillingStatus() {
       <div style={styles.statusRow}>
         Status: <span style={{ fontWeight: 'bold', color: status === 'active' ? '#10b981' : '#f59e0b' }}>{status.toUpperCase()}</span>
       </div>
-      {expiry && <div style={styles.statusRow}>Expires: {new Date(expiry).toLocaleDateString()}</div>}
+      {expiry && (
+        <div style={styles.statusRow}>
+          <span style={{ fontWeight: '600' }}>
+            {status === 'expired' ? 'Expired on:' : (plan === 'free' ? 'Access until:' : 'Next Billing Date:')}
+          </span>{' '}
+          {new Date(expiry).toLocaleDateString()}
+        </div>
+      )}
       
       <div style={styles.usageContainer}>
         <div style={styles.usageItem}>
@@ -44,9 +51,13 @@ export default function BillingStatus() {
             {usage.products} / {limits.max_products === null ? '∞' : limits.max_products}
           </span>
           {limits.max_products !== null && (
-            <div style={styles.progressBarBg}>
-              <div style={{ ...styles.progressBarFill, width: `${Math.min(100, (usage.products / limits.max_products) * 100)}%`, backgroundColor: usage.products >= limits.max_products ? '#ef4444' : '#3b82f6' }} />
-            </div>
+            <>
+              <div style={styles.progressBarBg}>
+                <div style={{ ...styles.progressBarFill, width: `${Math.min(100, (usage.products / limits.max_products) * 100)}%`, backgroundColor: usage.products >= limits.max_products ? '#ef4444' : (usage.products / limits.max_products >= 0.8 ? '#f59e0b' : '#3b82f6') }} />
+              </div>
+              {usage.products / limits.max_products >= 0.8 && usage.products < limits.max_products && <div style={{color: '#f59e0b', fontSize: '0.75rem', marginTop: '0.25rem'}}>Approaching limit (80%+)</div>}
+              {usage.products >= limits.max_products && <div style={{color: '#ef4444', fontSize: '0.75rem', marginTop: '0.25rem'}}>Limit reached</div>}
+            </>
           )}
         </div>
         <div style={styles.usageItem}>
@@ -55,9 +66,13 @@ export default function BillingStatus() {
             {usage.users} / {limits.max_users === null ? '∞' : limits.max_users}
           </span>
           {limits.max_users !== null && (
-             <div style={styles.progressBarBg}>
-               <div style={{ ...styles.progressBarFill, width: `${Math.min(100, (usage.users / limits.max_users) * 100)}%`, backgroundColor: usage.users >= limits.max_users ? '#ef4444' : '#3b82f6' }} />
-             </div>
+             <>
+               <div style={styles.progressBarBg}>
+                 <div style={{ ...styles.progressBarFill, width: `${Math.min(100, (usage.users / limits.max_users) * 100)}%`, backgroundColor: usage.users >= limits.max_users ? '#ef4444' : (usage.users / limits.max_users >= 0.8 ? '#f59e0b' : '#3b82f6') }} />
+               </div>
+               {usage.users / limits.max_users >= 0.8 && usage.users < limits.max_users && <div style={{color: '#f59e0b', fontSize: '0.75rem', marginTop: '0.25rem'}}>Approaching limit (80%+)</div>}
+               {usage.users >= limits.max_users && <div style={{color: '#ef4444', fontSize: '0.75rem', marginTop: '0.25rem'}}>Limit reached</div>}
+             </>
           )}
         </div>
       </div>

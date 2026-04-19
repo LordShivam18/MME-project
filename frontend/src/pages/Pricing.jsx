@@ -15,7 +15,7 @@ export default function Pricing() {
     // Check for success/cancel redirects
     const status = searchParams.get('status');
     if (status === 'success') {
-      setMessage('Payment successful! Your subscription is now active.');
+      setMessage('Payment successful! Enjoy your new Pro features, predictive AI, and unlimited scalability.');
     } else if (status === 'cancelled') {
       setMessage('Checkout cancelled. You have not been charged.');
     }
@@ -71,6 +71,10 @@ export default function Pricing() {
   };
 
   const currentPlan = billingInfo?.plan || 'free';
+  const status = billingInfo?.status || 'active';
+  
+  // Disable downgrade if usage exceeds free limits
+  const overFreeLimits = billingInfo?.usage && (billingInfo.usage.products > 10 || billingInfo.usage.users > 2);
 
   return (
     <div style={styles.page}>
@@ -78,13 +82,19 @@ export default function Pricing() {
       
       <div style={styles.content}>
         <div style={styles.header}>
-          <h1 style={styles.title}>Pricing & Billing</h1>
-          <p style={styles.subtitle}>Choose the plan that fits your business needs.</p>
+          <h1 style={styles.title}>Scale Your Business, Not Your Overhead</h1>
+          <p style={styles.subtitle}>Let AI optimize your inventory while you focus on growth. Choose a plan that drives ROI.</p>
         </div>
 
         {message && (
-          <div style={{ ...styles.alert, backgroundColor: message.includes('cancelled') || message.includes('Failed') ? '#fee2e2' : '#dcfce7', color: message.includes('cancelled') || message.includes('Failed') ? '#991b1b' : '#166534' }}>
+          <div style={{ ...styles.alert, backgroundColor: message.includes('cancelled') || message.includes('Failed') || message.includes('failed') ? '#fee2e2' : '#dcfce7', color: message.includes('cancelled') || message.includes('Failed') || message.includes('failed') ? '#991b1b' : '#166534' }}>
             {message}
+          </div>
+        )}
+
+        {status === 'expired' && currentPlan === 'pro' && !message && (
+          <div style={{ ...styles.alert, backgroundColor: '#fee2e2', color: '#991b1b' }}>
+            Your payment failed or your subscription expired. Please update your payment method to restore complete access.
           </div>
         )}
 
@@ -107,25 +117,36 @@ export default function Pricing() {
               <li style={styles.featureItem}>✕ AI Sales Predictions</li>
             </ul>
             {currentPlan === 'pro' && (
-              <button 
-                onClick={handleDowngrade} 
-                disabled={isDowngrading}
-                style={styles.downgradeBtn}
-              >
-                {isDowngrading ? 'Downgrading...' : 'Downgrade to Free'}
-              </button>
+              <div style={styles.actionContainer}>
+                <button 
+                  onClick={handleDowngrade} 
+                  disabled={isDowngrading || overFreeLimits}
+                  style={{ ...styles.downgradeBtn, opacity: (isDowngrading || overFreeLimits) ? 0.5 : 1, cursor: (isDowngrading || overFreeLimits) ? 'not-allowed' : 'pointer' }}
+                >
+                  {isDowngrading ? 'Processing...' : 'Downgrade to Free'}
+                </button>
+                {overFreeLimits && (
+                  <div style={{color: '#991b1b', fontSize: '0.75rem', marginTop: '0.5rem', textAlign: 'center'}}>
+                    You must reduce usage below free limits to downgrade.
+                  </div>
+                )}
+              </div>
             )}
             {currentPlan === 'free' && (
-              <button disabled style={styles.activeBtn}>Current Plan</button>
+              <div style={styles.activePlanText}>Your Current Plan</div>
             )}
           </div>
 
           {/* Pro Plan Card */}
-          <div style={{ ...styles.card, border: currentPlan === 'pro' ? '2px solid #8b5cf6' : '1px solid #e5e7eb', boxShadow: '0 10px 15px -3px rgba(139, 92, 246, 0.2)' }}>
+          <div style={{ ...styles.card, border: currentPlan === 'pro' ? '2px solid #8b5cf6' : '2px solid #f59e0b', boxShadow: '0 10px 15px -3px rgba(139, 92, 246, 0.2)' }}>
             {currentPlan === 'pro' && <div style={{ ...styles.currentBadge, backgroundColor: '#8b5cf6' }}>Current Plan</div>}
+            {currentPlan !== 'pro' && <div style={{ ...styles.currentBadge, backgroundColor: '#f59e0b' }}>⭐ Most Popular</div>}
             <h2 style={styles.cardTitle}>Pro Business</h2>
-            <div style={styles.price}>
+            <div style={{...styles.price, marginBottom: '0.5rem'}}>
               <span style={styles.currency}>$</span>49<span style={styles.period}>/month</span>
+            </div>
+            <div style={{textAlign: 'center', marginBottom: '2rem', fontSize: '0.85rem', color: '#10b981', fontWeight: '600'}}>
+              Pays for itself with ~1 optimized reorder
             </div>
             <ul style={styles.featuresList}>
               <li style={styles.featureItem}>✓ Unlimited Products</li>
@@ -137,13 +158,17 @@ export default function Pricing() {
               <button 
                 onClick={handleUpgrade} 
                 disabled={isUpgrading}
-                style={styles.upgradeBtn}
+                style={{ ...styles.upgradeBtn, opacity: isUpgrading ? 0.7 : 1, cursor: isUpgrading ? 'wait' : 'pointer' }}
               >
-                {isUpgrading ? 'Redirecting...' : 'Upgrade to Pro'}
+                {isUpgrading ? (
+                  <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}>
+                    <span className="spinner-border spinner-border-sm" role="status" aria-hidden="true" style={styles.spinner}></span> Redirecting to Checkout...
+                  </span>
+                ) : 'Upgrade to Pro'}
               </button>
             )}
             {currentPlan === 'pro' && (
-              <button disabled style={{ ...styles.activeBtn, backgroundColor: '#8b5cf6' }}>Current Plan</button>
+              <div style={styles.activePlanText}>Your Current Plan</div>
             )}
           </div>
         </div>
@@ -287,16 +312,37 @@ const styles = {
     cursor: 'pointer',
     transition: 'background-color 0.2s',
   },
-  activeBtn: {
+  activePlanText: {
     width: '100%',
     padding: '1rem',
-    borderRadius: '8px',
-    border: 'none',
-    backgroundColor: '#3b82f6',
-    color: '#ffffff',
+    textAlign: 'center',
+    color: '#6b7280',
     fontSize: '1.1rem',
     fontWeight: '600',
-    opacity: 0.8,
-    cursor: 'not-allowed',
+  },
+  actionContainer: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    width: '100%'
+  },
+  spinner: {
+    width: '1rem',
+    height: '1rem',
+    border: '2px solid rgba(255,255,255,0.3)',
+    borderRadius: '50%',
+    borderTopColor: '#fff',
+    animation: 'spin 1s ease-in-out infinite',
   }
 };
+
+// Add keyframes for spinner
+if (typeof document !== 'undefined') {
+  const style = document.createElement('style');
+  style.innerHTML = `
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+  `;
+  document.head.appendChild(style);
+}
