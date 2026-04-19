@@ -1,14 +1,16 @@
 import { useState, useEffect } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useSearchParams } from 'react-router-dom';
 import axiosClient from '../api/axiosClient';
 import Navigation from '../components/Navigation';
 
 export default function Contacts() {
   const location = useLocation();
+  const [searchParams] = useSearchParams();
   const [contacts, setContacts] = useState([]);
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState('all');
   const [selectedContact, setSelectedContact] = useState(null);
+  const [contactStats, setContactStats] = useState(null);
   const [globalOrders, setGlobalOrders] = useState([]);
   const [orders, setOrders] = useState([]);
 
@@ -56,27 +58,52 @@ export default function Contacts() {
     fetchGlobalOrders();
   }, []);
 
-  // Handle auto-routing from PredictionWidget
+  // Handle auto-routing context for Product Prediction assistance
   useEffect(() => {
-    if (contacts.length > 0 && products.length > 0 && location.state?.supplier_id && !selectedContact) {
-      const prefillSupplier = contacts.find(c => c.id === location.state.supplier_id);
-      if (prefillSupplier) {
-        setSelectedContact(prefillSupplier);
+    const stateInsight = location.state?.insight_suppliers;
+    
+    let targetSupplierId = null;
+    let targetProductId = null;
+    let targetQty = 1;
+
+    if (stateInsight && stateInsight.length > 0) {
+      targetSupplierId = stateInsight[0].id;
+      targetProductId = location.state.prefill_product;
+      targetQty = location.state.quantity;
+    } else if (searchParams.get('supplier_id')) {
+      targetSupplierId = parseInt(searchParams.get('supplier_id'));
+      targetProductId = parseInt(searchParams.get('product_id'));
+      targetQty = parseInt(searchParams.get('quantity')) || 1;
+    }
+
+    if (contacts.length > 0 && products.length > 0 && targetSupplierId && !selectedContact) {
+      const topSupplier = contacts.find(c => c.id === targetSupplierId);
+      if (topSupplier) {
+        setSelectedContact(topSupplier);
         setIsCreatingOrder(true);
-        
-        const prefillProduct = products.find(p => p.id === location.state.prefill_product);
+        const prefillProduct = products.find(p => p.id === targetProductId);
         if (prefillProduct && cart.length === 0) {
-          setCart([{ product: prefillProduct, quantity: location.state.quantity }]);
+          setCart([{ product: prefillProduct, quantity: targetQty, isAiSuggested: true }]);
         }
       }
     }
-  }, [contacts, products, location.state]);
+  }, [contacts, products, location.state, searchParams]);
+
+  const fetchContactStats = async (contactId) => {
+    try {
+      const res = await axiosClient.get(`/api/v1/contacts/${contactId}/stats`);
+      setContactStats(res.data);
+    } catch (e) { console.error("Stats fetch failed", e); }
+  };
 
   useEffect(() => {
     if (selectedContact) {
+      setContactStats(null);
       fetchOrders(selectedContact.id);
+      fetchContactStats(selectedContact.id);
     } else {
       setOrders([]);
+      setContactStats(null);
     }
   }, [selectedContact]);
 
@@ -125,11 +152,30 @@ export default function Contacts() {
     }
   };
 
-  const filteredContacts = contacts.filter(c => {
+  let filteredContacts = contacts.filter(c => {
     const matchesSearch = c.name.toLowerCase().includes(search.toLowerCase());
     const matchesType = typeFilter === 'all' || c.type === typeFilter;
     return matchesSearch && matchesType;
   });
+
+  // Sort logic for recommended suppliers
+  let insightList = location.state?.insight_suppliers;
+  if (!insightList && searchParams.get('supplier_id')) {
+    insightList = [{ id: parseInt(searchParams.get('supplier_id')), score: 1.0 }];
+  }
+
+  if (insightList) {
+    const ids = insightList.map(s => s.id);
+    filteredContacts.sort((a, b) => {
+      const aIdx = ids.indexOf(a.id);
+      const bIdx = ids.indexOf(b.id);
+      if (aIdx > -1 && bIdx > -1) return aIdx - bIdx;
+      if (aIdx > -1) return -1;
+      if (bIdx > -1) return 1;
+      // Fallback relative to recent
+      return new Date(b.created_at) - new Date(a.created_at);
+    });
+  }
   
   const cartTotal = cart.reduce((acc, c) => acc + (c.product.selling_price * c.quantity), 0);
 
@@ -195,24 +241,30 @@ export default function Contacts() {
           )}
 
           <div style={{ marginTop: '1rem', overflowY: 'auto', flex: 1 }}>
-            {filteredContacts.map(c => (
-              <div 
-                key={c.id} 
-                onClick={() => { setSelectedContact(c); setIsCreatingOrder(false); }}
-                style={{
-                  padding: '1rem', 
-                  borderBottom: '1px solid #f3f4f6', 
-                  cursor: 'pointer',
-                  backgroundColor: selectedContact?.id === c.id ? '#eff6ff' : 'white',
-                  borderLeft: selectedContact?.id === c.id ? '4px solid #3b82f6' : '4px solid transparent'
-                }}
-              >
-                <strong style={{ display: 'block', fontSize: '1.1rem' }}>{c.name}</strong>
-                <div style={{ fontSize: '0.85rem', color: '#6b7280', marginTop: '0.25rem' }}>
-                  {c.type.toUpperCase()} | {c.phone || 'No phone'}
+            {filteredContacts.map(c => {
+              const rankInfo = insightList?.find(s => s.id === c.id);
+              return (
+                <div 
+                  key={c.id} 
+                  onClick={() => { setSelectedContact(c); setIsCreatingOrder(false); }}
+                  style={{
+                    padding: '1rem', 
+                    borderBottom: '1px solid #f3f4f6', 
+                    cursor: 'pointer',
+                    backgroundColor: selectedContact?.id === c.id ? '#eff6ff' : 'white',
+                    borderLeft: selectedContact?.id === c.id ? '4px solid #3b82f6' : '4px solid transparent'
+                  }}
+                >
+                  <strong style={{ display: 'block', fontSize: '1.1rem' }}>
+                    {c.name} {rankInfo ? <span style={{marginLeft: '0.4rem', color: '#d97706', fontSize: '0.9rem'}}>★</span> : null}
+                  </strong>
+                  <div style={{ fontSize: '0.85rem', color: '#6b7280', marginTop: '0.25rem' }}>
+                    {c.type.toUpperCase()} | {c.phone || 'No phone'}
+                  </div>
+                  {rankInfo && rankInfo.score > 0 && <div style={{ fontSize: '0.75rem', color: '#10b981', marginTop: '0.2rem' }}>AI Relevance: {(rankInfo.score * 100).toFixed(0)}</div>}
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
 
@@ -233,6 +285,14 @@ export default function Contacts() {
                   <button onClick={() => setIsCreatingOrder(true)} style={{...styles.btn, background: '#10b981', color: 'white'}}>+ New Order</button>
                 )}
               </div>
+
+              {contactStats && (
+                <div style={{ display: 'flex', gap: '2rem', padding: '1rem', background: '#f0fdf4', borderRadius: '8px', border: '1px solid #bbf7d0', marginTop: '1rem' }}>
+                   <div><div style={{fontSize: '0.8rem', color: '#166534'}}>Orders (Last 50)</div><div style={{fontWeight: 'bold'}}>{contactStats.total_orders_last_50}</div></div>
+                   <div><div style={{fontSize: '0.8rem', color: '#166534'}}>Avg Delivery Time</div><div style={{fontWeight: 'bold'}}>{contactStats.avg_delivery_time_days > 0 ? `${contactStats.avg_delivery_time_days} days` : 'N/A'}</div></div>
+                   <div><div style={{fontSize: '0.8rem', color: '#166534'}}>Last Ordered</div><div style={{fontWeight: 'bold'}}>{contactStats.last_order_date ? new Date(contactStats.last_order_date).toLocaleDateString() : 'N/A'}</div></div>
+                </div>
+              )}
 
               {isCreatingOrder ? (
                 <div style={{ marginTop: '2rem' }}>
@@ -261,10 +321,25 @@ export default function Contacts() {
                         <tbody>
                           {cart.map((item, idx) => (
                             <tr key={idx} style={{ borderBottom: '1px solid #e5e7eb' }}>
-                              <td style={styles.td}>{item.product.name}</td>
-                              <td style={styles.td}>{item.quantity}</td>
+                              <td style={styles.td}>
+                                {item.product.name}
+                                {item.isAiSuggested && <div style={{fontSize: '0.7em', color: '#1d4ed8', marginTop: '4px'}}><strong>AI Suggestion applied</strong></div>}
+                              </td>
+                              <td style={styles.td}>
+                                <input 
+                                  type="number" 
+                                  min="1"
+                                  value={item.quantity}
+                                  onChange={(e) => {
+                                    const newCart = [...cart];
+                                    newCart[idx].quantity = e.target.value;
+                                    setCart(newCart);
+                                  }}
+                                  style={{ width: '60px', padding: '0.2rem' }}
+                                />
+                              </td>
                               <td style={styles.td}>${item.product.selling_price}</td>
-                              <td style={styles.td}>${item.product.selling_price * item.quantity}</td>
+                              <td style={styles.td}>${(item.product.selling_price * item.quantity).toFixed(2)}</td>
                             </tr>
                           ))}
                         </tbody>

@@ -66,6 +66,73 @@ def delete_contact(contact_id: int, db: Session = Depends(get_db), current_user:
     db.commit()
     return {"message": "Contact deleted"}
 
+# Simple TTL Cache for Stats (5 minutes)
+import time
+stats_cache = {}
+
+@router.get("/contacts/{contact_id}/stats")
+def get_contact_stats(contact_id: int, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    org_id = _org_id(current_user)
+    cache_key = f"{org_id}_{contact_id}"
+    
+    # Check cache (5 minutes = 300 seconds)
+    if cache_key in stats_cache:
+        data, timestamp = stats_cache[cache_key]
+        if time.time() - timestamp < 300:
+            return data
+
+    contact = db.query(models.Contact).filter(
+        models.Contact.id == contact_id,
+        models.Contact.organization_id == org_id
+    ).first()
+    
+    if not contact:
+        raise HTTPException(status_code=404, detail="Contact not found")
+
+    # Fetch last 50 orders
+    recent_orders = db.query(models.Order).filter(
+        models.Order.contact_id == contact_id,
+        models.Order.is_deleted == False
+    ).order_by(models.Order.created_at.desc()).limit(50).all()
+
+    total_orders = len(recent_orders)
+    last_order_date = recent_orders[0].created_at if total_orders > 0 else None
+
+    # Compute avg_delivery_time by examining OrderStatusHistory
+    delivery_times = []
+    if total_orders > 0:
+        order_ids = [o.id for o in recent_orders]
+        histories = db.query(models.OrderStatusHistory).filter(
+            models.OrderStatusHistory.order_id.in_(order_ids),
+            models.OrderStatusHistory.to_status.in_(["shipped", "delivered"])
+        ).order_by(models.OrderStatusHistory.changed_at.asc()).all()
+
+        history_map = {}
+        for h in histories:
+            if h.order_id not in history_map:
+                history_map[h.order_id] = {}
+            if h.to_status == "shipped" and "shipped" not in history_map[h.order_id]:
+                history_map[h.order_id]["shipped"] = h.changed_at
+            if h.to_status == "delivered" and "delivered" not in history_map[h.order_id]:
+                history_map[h.order_id]["delivered"] = h.changed_at
+
+        for o_id, stamps in history_map.items():
+            if "shipped" in stamps and "delivered" in stamps:
+                delta = (stamps["delivered"] - stamps["shipped"]).total_seconds()
+                if delta >= 0:
+                    delivery_times.append(delta)
+
+    avg_del = sum(delivery_times) / len(delivery_times) / 86400.0 if delivery_times else 0.0
+
+    result = {
+        "contact_id": contact_id,
+        "total_orders_last_50": total_orders,
+        "last_order_date": last_order_date,
+        "avg_delivery_time_days": round(avg_del, 2)
+    }
+    
+    stats_cache[cache_key] = (result, time.time())
+    return result
 
 # ============================================================
 # ORDERS (Atomic creation)

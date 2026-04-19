@@ -68,14 +68,18 @@ class InventorySummaryResponse(BaseModel):
         from_attributes = True
 
 # --- Prediction Schemas ---
+from typing import Optional, List, Dict, Any
+
 class PredictionResponse(BaseModel):
     product_id: int
     insight: str
     recommended_action: str
     confidence_score: int
     predicted_daily_demand: float
-    suggested_supplier_id: Optional[int] = None
-    suggested_supplier_name: Optional[str] = None
+    current_stock_quantity: int = 0
+    avg_daily_sales: float = 0.0
+    reorder_suggestion_source: str = "AI Logic Engine"
+    recommended_suppliers: List[Dict[str, Any]] = []
 
     class Config:
         from_attributes = True
