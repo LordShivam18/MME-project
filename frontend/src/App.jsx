@@ -6,6 +6,7 @@ import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 import ProductManager from './pages/ProductManager';
 import Inventory from './pages/Inventory';
+import Pricing from './pages/Pricing';
 
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -66,6 +67,12 @@ function App() {
         <Route path="/inventory" element={
           <ProtectedRoute>
             <Inventory />
+          </ProtectedRoute>
+        } />
+
+        <Route path="/billing" element={
+          <ProtectedRoute>
+            <Pricing />
           </ProtectedRoute>
         } />
         
