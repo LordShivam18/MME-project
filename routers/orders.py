@@ -32,6 +32,15 @@ def create_contact(request: Request, payload: schemas.ContactCreate, db: Session
     org_id = _org_id(current_user)
     require_active_subscription(db, org_id)
 
+    if payload.phone:
+        existing = db.query(models.Contact).filter(
+            models.Contact.organization_id == org_id,
+            models.Contact.phone == payload.phone,
+            models.Contact.is_deleted == False
+        ).first()
+        if existing:
+            raise HTTPException(status_code=400, detail="A contact with this phone number already exists.")
+
     new_contact = models.Contact(
         **payload.model_dump(),
         organization_id=org_id
@@ -61,6 +70,15 @@ def delete_contact(contact_id: int, db: Session = Depends(get_db), current_user:
 # ============================================================
 # ORDERS (Atomic creation)
 # ============================================================
+
+@router.get("/orders", response_model=List[schemas.OrderResponse])
+def get_all_orders(request: Request, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    org_id = _org_id(current_user)
+    orders = db.query(models.Order).filter(
+        models.Order.organization_id == org_id,
+        models.Order.is_deleted == False
+    ).order_by(models.Order.created_at.desc()).all()
+    return orders
 
 @router.get("/contacts/{contact_id}/orders", response_model=List[schemas.OrderResponse])
 @limiter.limit("50/minute")
@@ -107,6 +125,14 @@ def create_order(request: Request, payload: schemas.OrderCreate, db: Session = D
     )
     db.add(new_order)
     db.flush() # Yields new_order.id
+
+    history = models.OrderStatusHistory(
+        order_id=new_order.id,
+        from_status=None,
+        to_status="pending",
+        changed_by=current_user.get("email", "system")
+    )
+    db.add(history)
 
     # 3. Process Items and Compute Total strictly on Server
     for item in payload.items:
@@ -162,8 +188,28 @@ def update_order_status(order_id: int, payload: schemas.OrderUpdateStatus, db: S
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
         
-    if payload.status is not None:
+    ALLOWED_TRANSITIONS = {
+        "pending": ["confirmed", "cancelled"],
+        "confirmed": ["shipped", "cancelled"],
+        "shipped": ["delivered", "returned"],
+        "delivered": ["returned"],
+        "returned": [],
+        "cancelled": []
+    }
+
+    if payload.status is not None and payload.status != order.status:
+        if payload.status not in ALLOWED_TRANSITIONS.get(order.status, []):
+            raise HTTPException(status_code=400, detail=f"Invalid transition from {order.status} to {payload.status}")
+        
+        history = models.OrderStatusHistory(
+            order_id=order.id,
+            from_status=order.status,
+            to_status=payload.status,
+            changed_by=current_user.get("email", "system")
+        )
+        db.add(history)
         order.status = payload.status
+
     if payload.delivery_status is not None:
         order.delivery_status = payload.delivery_status
     if payload.tracking_number is not None:

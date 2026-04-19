@@ -74,6 +74,8 @@ class PredictionResponse(BaseModel):
     recommended_action: str
     confidence_score: int
     predicted_daily_demand: float
+    suggested_supplier_id: Optional[int] = None
+    suggested_supplier_name: Optional[str] = None
 
     class Config:
         from_attributes = True

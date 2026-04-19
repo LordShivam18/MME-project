@@ -1,9 +1,11 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import axiosClient from '../api/axiosClient';
 import { LoadingSpinner, ErrorState } from './StateSpinners';
 import SalesChart from './SalesChart';
 
 export default function PredictionWidget({ shopId, productId, onReorder }) {
+  const navigate = useNavigate();
   const [prediction, setPrediction] = useState(null);
   const [chartData, setChartData] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -51,11 +53,29 @@ export default function PredictionWidget({ shopId, productId, onReorder }) {
       <div style={{ marginTop: '1rem', padding: '1rem', background: '#ffffff', borderRadius: '8px', borderLeft: '4px solid #3b82f6' }}>
         <strong style={{ display: 'block', marginBottom: '0.25rem', color: '#374151' }}>Recommended Action:</strong>
         <span style={{ color: '#4b5563' }}>{prediction.recommended_action}</span>
+        
+        {prediction.suggested_supplier_name && (
+          <div style={{ marginTop: '0.5rem', fontSize: '0.85rem', color: '#6b7280' }}>
+            <strong>Suggested Supplier:</strong> {prediction.suggested_supplier_name}
+          </div>
+        )}
       </div>
 
       {!isHealthy && (
-        <button onClick={() => onReorder && onReorder(productId)} style={{ backgroundColor: "#3b82f6", color: "white", padding: "0.6rem 1rem", border: "none", borderRadius: "8px", marginTop: "1rem", cursor: "pointer", fontWeight: 'bold', width: '100%' }}>
-          Take Action
+        <button onClick={() => {
+          if (prediction.suggested_supplier_id) {
+            navigate('/contacts', { 
+              state: { 
+                prefill_product: productId, 
+                supplier_id: prediction.suggested_supplier_id, 
+                quantity: Math.ceil((prediction.predicted_daily_demand || 1) * 7) 
+              } 
+            });
+          } else if (onReorder) {
+            onReorder(productId);
+          }
+        }} style={{ backgroundColor: "#3b82f6", color: "white", padding: "0.6rem 1rem", border: "none", borderRadius: "8px", marginTop: "1rem", cursor: "pointer", fontWeight: 'bold', width: '100%' }}>
+          {prediction.suggested_supplier_id ? `Create Order with ${prediction.suggested_supplier_name}` : "Take Action"}
         </button>
       )}
       <div>

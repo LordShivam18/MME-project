@@ -216,6 +216,10 @@ class Contact(Base):
     organization = relationship("Organization")
     orders = relationship("Order", back_populates="contact")
 
+    __table_args__ = (
+        UniqueConstraint('organization_id', 'phone', name='uix_org_phone'),
+    )
+
 
 class Order(Base):
     __tablename__ = "orders"
@@ -251,3 +255,18 @@ class OrderItem(Base):
     # Relationships
     order = relationship("Order", back_populates="items")
     product = relationship("Product")
+
+
+class OrderStatusHistory(Base):
+    __tablename__ = "order_status_history"
+    id = Column(Integer, primary_key=True, index=True)
+    order_id = Column(Integer, ForeignKey("orders.id"), index=True, nullable=False)
+    
+    from_status = Column(String, nullable=True)
+    to_status = Column(String, nullable=False)
+    
+    changed_at = Column(DateTime, default=datetime.utcnow)
+    changed_by = Column(String, nullable=True)  # System, User email, etc.
+    
+    # Relationships
+    order = relationship("Order")

@@ -1,11 +1,15 @@
 import { useState, useEffect } from 'react';
+import { useLocation } from 'react-router-dom';
 import axiosClient from '../api/axiosClient';
 import Navigation from '../components/Navigation';
 
 export default function Contacts() {
+  const location = useLocation();
   const [contacts, setContacts] = useState([]);
   const [search, setSearch] = useState('');
+  const [typeFilter, setTypeFilter] = useState('all');
   const [selectedContact, setSelectedContact] = useState(null);
+  const [globalOrders, setGlobalOrders] = useState([]);
   const [orders, setOrders] = useState([]);
 
   // Create Mode states
@@ -39,10 +43,34 @@ export default function Contacts() {
     } catch (e) { console.error(e); }
   };
 
+  const fetchGlobalOrders = async () => {
+    try {
+      const res = await axiosClient.get(`/api/v1/orders`);
+      setGlobalOrders(res.data);
+    } catch (e) { console.error(e); }
+  };
+
   useEffect(() => {
     fetchContacts();
     fetchProducts();
+    fetchGlobalOrders();
   }, []);
+
+  // Handle auto-routing from PredictionWidget
+  useEffect(() => {
+    if (contacts.length > 0 && products.length > 0 && location.state?.supplier_id && !selectedContact) {
+      const prefillSupplier = contacts.find(c => c.id === location.state.supplier_id);
+      if (prefillSupplier) {
+        setSelectedContact(prefillSupplier);
+        setIsCreatingOrder(true);
+        
+        const prefillProduct = products.find(p => p.id === location.state.prefill_product);
+        if (prefillProduct && cart.length === 0) {
+          setCart([{ product: prefillProduct, quantity: location.state.quantity }]);
+        }
+      }
+    }
+  }, [contacts, products, location.state]);
 
   useEffect(() => {
     if (selectedContact) {
@@ -91,18 +119,45 @@ export default function Contacts() {
     try {
       await axiosClient.patch(`/api/v1/orders/${orderId}/status`, { status: newStatus });
       fetchOrders(selectedContact.id);
+      fetchGlobalOrders();
     } catch (err) {
-      alert('Failed to update status');
+      alert(err.response?.data?.detail || 'Failed to update status');
     }
   };
 
-  const filteredContacts = contacts.filter(c => c.name.toLowerCase().includes(search.toLowerCase()));
+  const filteredContacts = contacts.filter(c => {
+    const matchesSearch = c.name.toLowerCase().includes(search.toLowerCase());
+    const matchesType = typeFilter === 'all' || c.type === typeFilter;
+    return matchesSearch && matchesType;
+  });
+  
   const cartTotal = cart.reduce((acc, c) => acc + (c.product.selling_price * c.quantity), 0);
+
+  // Dashboard calculations
+  const totalValue = globalOrders.reduce((acc, o) => acc + o.total_amount, 0);
+  const pendingCount = globalOrders.filter(o => ['pending', 'confirmed'].includes(o.status)).length;
+  const deliveredCount = globalOrders.filter(o => o.status === 'delivered').length;
 
   return (
     <div style={{ fontFamily: 'sans-serif', maxWidth: '1400px', margin: '0 auto', padding: '1rem', height: '100vh', display: 'flex', flexDirection: 'column' }}>
       <Navigation />
       
+      {/* Global Orders Dashboard */}
+      <div style={{ display: 'flex', gap: '2rem', marginBottom: '2rem', padding: '1rem', background: '#f8fafc', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: '0.85rem', color: '#64748b', fontWeight: 'bold' }}>TOTAL SPEND/REVENUE</div>
+          <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#0f172a' }}>${totalValue.toFixed(2)}</div>
+        </div>
+        <div style={{ flex: 1, borderLeft: '1px solid #e2e8f0', paddingLeft: '2rem' }}>
+          <div style={{ fontSize: '0.85rem', color: '#64748b', fontWeight: 'bold' }}>PENDING ORDERS</div>
+          <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#d97706' }}>{pendingCount}</div>
+        </div>
+        <div style={{ flex: 1, borderLeft: '1px solid #e2e8f0', paddingLeft: '2rem' }}>
+          <div style={{ fontSize: '0.85rem', color: '#64748b', fontWeight: 'bold' }}>DELIVERED</div>
+          <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#10b981' }}>{deliveredCount}</div>
+        </div>
+      </div>
+
       <div style={{ display: 'grid', gridTemplateColumns: '300px 1fr', gap: '2rem', flex: 1, overflow: 'hidden' }}>
         
         {/* LEFT PANEL: Contacts */}
@@ -112,13 +167,20 @@ export default function Contacts() {
             <button onClick={() => setIsCreatingContact(!isCreatingContact)} style={styles.btnSm}>+ Add</button>
           </div>
           
-          <input 
-            type="text" 
-            placeholder="Search contacts..." 
-            value={search} 
-            onChange={(e) => setSearch(e.target.value)} 
-            style={styles.input}
-          />
+          <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.5rem' }}>
+             <select style={{...styles.input, marginBottom: 0, width: '100px'}} value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
+                <option value="all">All</option>
+                <option value="supplier">Suppliers</option>
+                <option value="customer">Customers</option>
+             </select>
+             <input 
+               type="text" 
+               placeholder="Search..." 
+               value={search} 
+               onChange={(e) => setSearch(e.target.value)} 
+               style={{...styles.input, marginBottom: 0, flex: 1}}
+             />
+          </div>
           
           {isCreatingContact && (
             <div style={{ marginTop: '1rem', padding: '1rem', background: '#f3f4f6', borderRadius: '8px' }}>
