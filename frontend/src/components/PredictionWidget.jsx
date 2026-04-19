@@ -35,17 +35,27 @@ export default function PredictionWidget({ shopId, productId, onReorder }) {
     );
   }
 
-  const isHealthy = prediction.prediction !== "Increase stock";
+  const isHealthy = prediction.insight === "Stable Demand";
 
   return (
-    <div style={{ padding: '1rem', border: '1px solid #ccc', borderRadius: '8px', background: isHealthy ? '#e7f9eb' : '#fff3cd' }}>
-      <h4 style={{ margin: '0 0 0.5rem 0' }}>Demand Logic Engine</h4>
-      <p style={{ margin: '0.2rem 0' }}><strong>Action:</strong> <span style={{ color: isHealthy ? 'green' : 'red' }}>{prediction.prediction}</span></p>
-      <p style={{ margin: '0.2rem 0' }}>Est. Daily Sales: {(Number(prediction?.estimated_daily_sales || 0)).toFixed(2)}</p>
-      <p style={{ margin: '0.2rem 0' }}>Target Safety Buffer: {(Number(prediction?.target_safety_buffer || 0)).toFixed(0)}</p>
-      {prediction?.reorder_now && (
-        <button onClick={() => onReorder && onReorder(productId, prediction?.target_safety_buffer)} style={{ backgroundColor: "red", color: "white", padding: "0.4rem 0.8rem", border: "none", borderRadius: "4px", marginTop: "0.5rem", cursor: "pointer", fontWeight: 'bold', display: 'block' }}>
-          Reorder Now
+    <div style={{ padding: '1.5rem', border: '2px solid', borderColor: isHealthy ? '#10b981' : '#3b82f6', borderRadius: '12px', background: isHealthy ? '#f0fdf4' : '#eff6ff' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
+        <h4 style={{ margin: 0, color: '#1f2937' }}>AI Insight</h4>
+        <div style={{ background: '#10b981', color: 'white', padding: '2px 8px', borderRadius: '12px', fontSize: '0.75rem', fontWeight: 'bold' }}>
+          {prediction.confidence_score}% Confidence
+        </div>
+      </div>
+      <h3 style={{ margin: '0.5rem 0', color: isHealthy ? '#065f46' : '#1e40af', fontSize: '1.25rem' }}>{prediction.insight}</h3>
+      <p style={{ margin: '0.2rem 0', color: '#6b7280', fontSize: '0.9rem' }}>Est. Daily Demand: {(Number(prediction?.predicted_daily_demand || 0)).toFixed(2)} units</p>
+      
+      <div style={{ marginTop: '1rem', padding: '1rem', background: '#ffffff', borderRadius: '8px', borderLeft: '4px solid #3b82f6' }}>
+        <strong style={{ display: 'block', marginBottom: '0.25rem', color: '#374151' }}>Recommended Action:</strong>
+        <span style={{ color: '#4b5563' }}>{prediction.recommended_action}</span>
+      </div>
+
+      {!isHealthy && (
+        <button onClick={() => onReorder && onReorder(productId)} style={{ backgroundColor: "#3b82f6", color: "white", padding: "0.6rem 1rem", border: "none", borderRadius: "8px", marginTop: "1rem", cursor: "pointer", fontWeight: 'bold', width: '100%' }}>
+          Take Action
         </button>
       )}
       <div>

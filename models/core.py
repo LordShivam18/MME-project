@@ -169,3 +169,85 @@ class StripeEvent(Base):
 
     # Relationships
     organization = relationship("Organization", back_populates="stripe_events")
+
+class Notification(Base):
+    __tablename__ = "notifications"
+    id = Column(Integer, primary_key=True, index=True)
+    organization_id = Column(Integer, ForeignKey("organizations.id"), index=True, nullable=False)
+    message = Column(String, nullable=False)
+    type = Column(String, nullable=False)  # low_stock, insight, system
+    priority = Column(String, default="low", nullable=False)  # low, medium, high
+    is_read = Column(Boolean, default=False, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    # Relationships
+    organization = relationship("Organization")
+
+class ProductInsight(Base):
+    __tablename__ = "product_insights"
+    id = Column(Integer, primary_key=True, index=True)
+    product_id = Column(Integer, ForeignKey("products.id"), unique=True, index=True, nullable=False)
+    organization_id = Column(Integer, ForeignKey("organizations.id"), index=True, nullable=False)
+    insight = Column(String, nullable=False)
+    recommended_action = Column(String, nullable=False)
+    confidence_score = Column(Integer, nullable=False)
+    predicted_daily_demand = Column(Float, nullable=False, default=0.0)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Relationships
+    product = relationship("Product")
+    organization = relationship("Organization")
+
+# ============================================================
+# CONTACTS & ORDERS
+# ============================================================
+
+class Contact(Base):
+    __tablename__ = "contacts"
+    id = Column(Integer, primary_key=True, index=True)
+    organization_id = Column(Integer, ForeignKey("organizations.id"), index=True, nullable=False)
+    name = Column(String, nullable=False)
+    phone = Column(String, nullable=True)
+    type = Column(String, nullable=False)  # supplier, customer
+    is_deleted = Column(Boolean, default=False, nullable=False, server_default="false")
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    # Relationships
+    organization = relationship("Organization")
+    orders = relationship("Order", back_populates="contact")
+
+
+class Order(Base):
+    __tablename__ = "orders"
+    id = Column(Integer, primary_key=True, index=True)
+    organization_id = Column(Integer, ForeignKey("organizations.id"), index=True, nullable=False)
+    contact_id = Column(Integer, ForeignKey("contacts.id"), index=True, nullable=False)
+    
+    status = Column(String, default="pending", nullable=False) # pending, confirmed, shipped, delivered, cancelled
+    delivery_status = Column(String, nullable=True) # processing, in_transit, etc
+    tracking_number = Column(String, nullable=True)
+    
+    total_amount = Column(Float, nullable=False, default=0.0)
+    is_deleted = Column(Boolean, default=False, nullable=False, server_default="false")
+    
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Relationships
+    organization = relationship("Organization")
+    contact = relationship("Contact", back_populates="orders")
+    items = relationship("OrderItem", back_populates="order", cascade="all, delete-orphan")
+
+
+class OrderItem(Base):
+    __tablename__ = "order_items"
+    id = Column(Integer, primary_key=True, index=True)
+    order_id = Column(Integer, ForeignKey("orders.id"), index=True, nullable=False)
+    product_id = Column(Integer, ForeignKey("products.id"), index=True, nullable=False)
+    
+    quantity = Column(Integer, nullable=False)
+    price_at_time = Column(Float, nullable=False) # Server calculates this
+    
+    # Relationships
+    order = relationship("Order", back_populates="items")
+    product = relationship("Product")

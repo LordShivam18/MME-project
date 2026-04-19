@@ -70,9 +70,87 @@ class InventorySummaryResponse(BaseModel):
 # --- Prediction Schemas ---
 class PredictionResponse(BaseModel):
     product_id: int
-    suggested_order_qty: float
+    insight: str
+    recommended_action: str
+    confidence_score: int
     predicted_daily_demand: float
-    safety_stock_required: float
-    reorder_point: float
-    current_inventory: int
-    action_required: str
+
+    class Config:
+        from_attributes = True
+
+# --- Notification Schemas ---
+class NotificationResponse(BaseModel):
+    id: int
+    organization_id: int
+    message: str
+    type: str
+    priority: str
+    is_read: bool
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+class NotificationUpdate(BaseModel):
+    is_read: bool
+
+
+# --- CRM Contact Schemas ---
+class ContactBase(BaseModel):
+    name: str = Field(..., min_length=2, max_length=100)
+    phone: Optional[str] = None
+    type: str = Field(..., description="supplier or customer")
+
+class ContactCreate(ContactBase):
+    pass
+
+class ContactResponse(ContactBase):
+    id: int
+    organization_id: int
+    is_deleted: bool
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+# --- Order Schemas ---
+class OrderItemCreate(BaseModel):
+    product_id: int
+    quantity: int = Field(..., gt=0)
+
+class OrderItemResponse(BaseModel):
+    id: int
+    order_id: int
+    product_id: int
+    quantity: int
+    price_at_time: float
+
+    # Include nested product name context for UI
+    class Config:
+        from_attributes = True
+
+class OrderCreate(BaseModel):
+    contact_id: int
+    items: list[OrderItemCreate]
+
+class OrderUpdateStatus(BaseModel):
+    status: Optional[str] = None # pending, confirmed, shipped, delivered, cancelled
+    delivery_status: Optional[str] = None
+    tracking_number: Optional[str] = None
+
+class OrderResponse(BaseModel):
+    id: int
+    organization_id: int
+    contact_id: int
+    status: str
+    delivery_status: Optional[str] = None
+    tracking_number: Optional[str] = None
+    total_amount: float
+    is_deleted: bool
+    created_at: datetime
+    updated_at: datetime
+    items: list[OrderItemResponse] = []
+
+    class Config:
+        from_attributes = True

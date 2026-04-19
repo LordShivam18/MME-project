@@ -7,6 +7,8 @@ import Dashboard from './pages/Dashboard';
 import ProductManager from './pages/ProductManager';
 import Inventory from './pages/Inventory';
 import Pricing from './pages/Pricing';
+import Onboarding from './pages/Onboarding';
+import Contacts from './pages/Contacts';
 
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -63,6 +65,12 @@ function App() {
             <ProductManager />
           </ProtectedRoute>
         } />
+        
+        <Route path="/contacts" element={
+          <ProtectedRoute>
+            <Contacts />
+          </ProtectedRoute>
+        } />
 
         <Route path="/inventory" element={
           <ProtectedRoute>
@@ -73,6 +81,12 @@ function App() {
         <Route path="/billing" element={
           <ProtectedRoute>
             <Pricing />
+          </ProtectedRoute>
+        } />
+
+        <Route path="/onboarding" element={
+          <ProtectedRoute>
+            <Onboarding />
           </ProtectedRoute>
         } />
         

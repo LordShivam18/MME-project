@@ -26,6 +26,17 @@ export default function Login({ onLogin }) {
       if (response.status === 200) {
         localStorage.setItem("access_token", response.data.access_token);
         localStorage.setItem("refresh_token", response.data.refresh_token);
+        
+        // Check if first-time user by checking product count
+        try {
+          const prodsRes = await axiosClient.get('/api/v1/products/');
+          if (prodsRes.data && prodsRes.data.length === 0) {
+            window.location.href = "/onboarding";
+            return;
+          }
+        } catch (e) {
+          // ignore
+        }
         window.location.href = "/dashboard";
       }
     } catch (err) {

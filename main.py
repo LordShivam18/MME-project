@@ -247,6 +247,9 @@ async def log_requests(request: Request, call_next):
 # ---------------- ROUTES ----------------
 app.include_router(endpoints.router, prefix="/api/v1")
 
+from routers import orders
+app.include_router(orders.router, prefix="/api/v1")
+
 # ---------------- HEALTH CHECK ----------------
 @app.get("/health")
 def health_check():

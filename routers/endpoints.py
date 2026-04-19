@@ -471,6 +471,28 @@ def record_sale(payload: schemas.SalesCreate, background_tasks: BackgroundTasks,
         db.commit()
         db.refresh(inventory)
 
+        # 🔴 PART 2: Real-time trigger (ONLY low stock)
+        # Prevent duplicate notifications (e.g. within 24 hours)
+        if inventory.quantity_on_hand <= inventory.reorder_point:
+            from datetime import timedelta
+            cutoff_time = datetime.utcnow() - timedelta(hours=24)
+            recent_notif = db.query(models.Notification).filter(
+                models.Notification.organization_id == org_id,
+                models.Notification.type == "low_stock",
+                models.Notification.message.like(f"%Product {payload.product_id}%"),
+                models.Notification.created_at >= cutoff_time
+            ).first()
+            
+            if not recent_notif:
+                notif = models.Notification(
+                    organization_id=org_id,
+                    type="low_stock",
+                    priority="high",
+                    message=f"Low stock alert for Product {payload.product_id}: Only {inventory.quantity_on_hand} left."
+                )
+                db.add(notif)
+                db.commit()
+
         # Audit (background)
         background_tasks.add_task(
             log_action, current_user["user_id"], org_id,
@@ -1172,3 +1194,27 @@ def get_billing_status(db: Session = Depends(get_db), current_user: dict = Depen
         },
         "expiry": sub.expiry_date.isoformat() if sub and sub.expiry_date else None
     }
+
+# ============================================================
+# NOTIFICATIONS
+# ============================================================
+@router.get("/notifications", response_model=List[schemas.NotificationResponse])
+def get_notifications(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    org_id = _org_id(current_user)
+    return db.query(models.Notification).filter(
+        models.Notification.organization_id == org_id
+    ).order_by(models.Notification.created_at.desc()).limit(50).all()
+
+@router.patch("/notifications/{notif_id}/read", response_model=schemas.NotificationResponse)
+def mark_notification_read(notif_id: int, payload: schemas.NotificationUpdate, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    org_id = _org_id(current_user)
+    notif = db.query(models.Notification).filter(
+        models.Notification.id == notif_id,
+        models.Notification.organization_id == org_id
+    ).first()
+    if not notif:
+        raise HTTPException(status_code=404, detail="Notification not found")
+    notif.is_read = payload.is_read
+    db.commit()
+    db.refresh(notif)
+    return notif
