@@ -46,6 +46,7 @@ export default function Navigation() {
          <Link to="/products" style={{ textDecoration: 'none', color: '#333' }}>Manage Products</Link>
          <Link to="/contacts" style={{ textDecoration: 'none', color: '#333' }}>CRM & Orders</Link>
          <Link to="/inventory" style={{ textDecoration: 'none', color: '#333' }}>Inventory Intelligence</Link>
+         <Link to="/profit" style={{ textDecoration: 'none', color: '#333' }}>Profit Dashboard</Link>
          <Link to="/billing" style={{ textDecoration: 'none', color: '#333' }}>Billing</Link>
        </div>
        

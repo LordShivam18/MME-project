@@ -9,6 +9,7 @@ import Inventory from './pages/Inventory';
 import Pricing from './pages/Pricing';
 import Onboarding from './pages/Onboarding';
 import Contacts from './pages/Contacts';
+import ProfitDashboard from './pages/ProfitDashboard';
 
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -75,6 +76,12 @@ function App() {
         <Route path="/inventory" element={
           <ProtectedRoute>
             <Inventory />
+          </ProtectedRoute>
+        } />
+
+        <Route path="/profit" element={
+          <ProtectedRoute>
+            <ProfitDashboard />
           </ProtectedRoute>
         } />
 
