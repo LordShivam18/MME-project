@@ -35,7 +35,7 @@ export default function ProfitDashboard() {
           if (Date.now() - parsed.timestamp < CACHE_TTL_MS) {
             setProducts(parsed.data);
             setIsLoading(false);
-            return;
+            // Stale-while-revalidate: Do NOT return, let background fetch proceed seamlessly
           }
         }
 
@@ -81,7 +81,7 @@ export default function ProfitDashboard() {
       if (cacheMap[product.id] && (Date.now() - cacheMap[product.id].timestamp < CACHE_TTL_MS)) {
         setModalData(cacheMap[product.id].data);
         setModalLoading(false);
-        return;
+        // Stale-while-revalidate for modal
       }
 
       const res = await axiosClient.get(`/api/v1/predictions/${product.id}`);
@@ -175,7 +175,8 @@ export default function ProfitDashboard() {
         .growth-badge { display: inline-flex; align-items: center; padding: 0.25rem 0.75rem; border-radius: 999px; font-weight: 600; font-size: 0.875rem; }
         .positive { background: #d1fae5; color: #065f46; }
         .negative { background: #fee2e2; color: #991b1b; }
-        .btn-action { padding: 0.4rem 0.8rem; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 0.85rem; border: none; }
+        .btn-action { padding: 0.5rem 1rem; border-radius: 8px; cursor: pointer; font-weight: 600; font-size: 0.9rem; border: none; min-height: 44px; display: inline-flex; align-items: center; justify-content: center; transition: opacity 0.2s; }
+        .btn-action:hover { opacity: 0.9; }
         .btn-primary { background: #3b82f6; color: white; }
         .btn-warning { background: #f59e0b; color: white; }
         .btn-danger { background: #ef4444; color: white; }
@@ -189,7 +190,7 @@ export default function ProfitDashboard() {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: '2.5rem' }}>
           <div>
             <h1 style={{ fontSize: '2rem', fontWeight: '800', color: '#0f172a', margin: '0 0 0.5rem 0' }}>Profit Intelligence</h1>
-            <p style={{ color: '#64748b', margin: 0, fontSize: '1.1rem' }}>Performance insights strictly audited against 7-Day UTC periods.</p>
+            <p style={{ color: '#64748b', margin: 0, fontSize: '1.1rem' }}>Estimated performance insights structured against 7-Day UTC periods.</p>
           </div>
           <button onClick={() => { localStorage.removeItem(SUMMARY_CACHE_KEY); window.location.reload(); }} className="btn-action" style={{ background: '#e2e8f0', color: '#475569' }}>↻ Hard Sync</button>
         </div>
@@ -197,7 +198,7 @@ export default function ProfitDashboard() {
         {/* SUMMARY CARDS */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '1.5rem', marginBottom: '3rem' }}>
           <div className="glass-card" style={{ padding: '1.5rem' }}>
-            <h3 style={{ color: '#64748b', fontSize: '0.9rem', margin: 0, fontWeight: 600, textTransform: 'uppercase' }}>Volume (7-Day UTC)</h3>
+            <h3 style={{ color: '#64748b', fontSize: '0.9rem', margin: 0, fontWeight: 600, textTransform: 'uppercase' }}>Est. Volume (7-Day UTC)</h3>
             <div className="metric-value">${total7DayProfit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
             <div className={`growth-badge ${isPositiveGrowth ? 'positive' : 'negative'}`}>
               {isPositiveGrowth ? '↑' : '↓'} {Math.abs(growthPercent)}% vs prior period
@@ -224,10 +225,12 @@ export default function ProfitDashboard() {
                 <tbody>
                   {topProducts.slice(0, 5).map(p => (
                     <tr key={p.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                      <td style={{ padding: '0.8rem 0', fontWeight: 600, color: '#334155' }}>{p.name}</td>
+                      <td style={{ padding: '0.8rem 0', fontWeight: 600, color: '#334155' }}>
+                        <span style={{cursor: 'pointer'}} onClick={() => handleProductClick(p)}>{p.name} ↗</span>
+                      </td>
                       <td style={{ padding: '0.8rem 0', color: '#10b981', fontWeight: 700 }}>${p.profit_per_unit.toFixed(2)} / unit</td>
                       <td style={{ padding: '0.8rem 0', textAlign: 'right' }}>
-                        <button className="btn-action btn-primary" onClick={() => handleProductClick(p)}>Analyze</button>
+                        <button className="btn-action btn-primary" onClick={() => navigate('/contacts')}>View Suppliers</button>
                       </td>
                     </tr>
                   ))}
@@ -244,10 +247,12 @@ export default function ProfitDashboard() {
                 <tbody>
                   {lowProfitProducts.slice(0, 5).map(p => (
                     <tr key={p.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                      <td style={{ padding: '0.8rem 0', fontWeight: 600, color: '#334155' }}>{p.name}</td>
+                      <td style={{ padding: '0.8rem 0', fontWeight: 600, color: '#334155' }}>
+                        <span style={{cursor: 'pointer'}} onClick={() => handleProductClick(p)}>{p.name} ↗</span>
+                      </td>
                       <td style={{ padding: '0.8rem 0', color: '#ef4444', fontWeight: 700 }}>${p.profit_per_unit.toFixed(2)} / unit</td>
-                      <td style={{ padding: '0.8rem 0', textAlign: 'right' }}>
-                        <button className="btn-action btn-danger" onClick={() => navigate('/products')}>Reduce Stock</button>
+                      <td style={{ padding: '0.8rem 0', textAlign: 'right', display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+                        <button className="btn-action btn-warning" onClick={() => navigate('/products')}>Review Price</button>
                       </td>
                     </tr>
                   ))}
@@ -262,7 +267,7 @@ export default function ProfitDashboard() {
         <div className="split-row">
           <div className="half-col glass-card" style={{ padding: '2rem', flex: '2' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1.5rem' }}>
-              <h3 style={{ margin: 0, fontSize: '1.25rem', color: '#0f172a' }}>Global Profit Trend (UTC Base)</h3>
+              <h3 style={{ margin: 0, fontSize: '1.25rem', color: '#0f172a' }}>Global Est. Profit Trend (UTC Base)</h3>
               <span className="growth-badge positive">Stable Network</span>
             </div>
             <div style={{ height: '300px' }}><Line data={chartData} options={{ responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { border: { display: false } }, x: { grid: { display: false } } } }} /></div>

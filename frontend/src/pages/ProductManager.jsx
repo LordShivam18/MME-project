@@ -77,6 +77,11 @@ export default function ProductManager() {
         setSuccessMessage("Product added successfully");
       }
       
+      
+      // Clear cache on catalog mutation
+      localStorage.removeItem('profit_dashboard_summary');
+      localStorage.removeItem('profit_dashboard_predictions');
+
       // Clear form and refetch bounds
       setName(''); setSku(''); setCategory(''); setCostPrice(0); setSellingPrice(0); setLeadTime(1);
       await fetchProducts();
@@ -114,6 +119,10 @@ export default function ProductManager() {
       setIsLoading(true);
       console.log("DELETE:", `/api/v1/products/${id}`);
       await axiosClient.delete(`/api/v1/products/${id}`);
+      
+      localStorage.removeItem('profit_dashboard_summary');
+      localStorage.removeItem('profit_dashboard_predictions');
+
       setSuccessMessage("Product deleted successfully");
       await fetchProducts();
     } catch (err) {
@@ -130,6 +139,11 @@ export default function ProductManager() {
         product_id: product_id,
         quantity_sold: 1
       });
+      
+      // Invalidate dash caching logic
+      localStorage.removeItem('profit_dashboard_summary');
+      localStorage.removeItem('profit_dashboard_predictions');
+
       setSuccessMessage(`Sale recorded! Stock left: ${res.data.stock_left}`);
       await fetchProducts();
     } catch (err) {
@@ -153,6 +167,11 @@ export default function ProductManager() {
          product_id: product_id,
          quantity: quantity
       });
+      
+      // Invalidate dash caching logic
+      localStorage.removeItem('profit_dashboard_summary');
+      localStorage.removeItem('profit_dashboard_predictions');
+
       setSuccessMessage(`Stock updated! New quantity: ${res.data.quantity_on_hand}`);
       await fetchProducts();
     } catch (err) {
