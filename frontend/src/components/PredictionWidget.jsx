@@ -56,6 +56,7 @@ export default function PredictionWidget({ shopId, productId, onReorder }) {
           <li>Current Stock: <strong>{prediction.current_stock_quantity} units</strong></li>
           <li>Recent Avg Sales: <strong>{prediction.avg_daily_sales?.toFixed(2)} / day</strong></li>
           <li>Predicted Demand: <strong>{prediction.predicted_daily_demand?.toFixed(2)} / day</strong> ({(prediction.predicted_daily_demand > prediction.avg_daily_sales ? '+' : '')}{((prediction.predicted_daily_demand - prediction.avg_daily_sales) / (prediction.avg_daily_sales || 1) * 100).toFixed(0)}% shift vs last 7 days)</li>
+          <li>Last Order Qty: <strong>{prediction.last_order_quantity} units</strong> (AI Suggests: Math.ceil({prediction.predicted_daily_demand?.toFixed(2)} * 7) = <strong>{Math.ceil((prediction.predicted_daily_demand || 1) * 7)} units</strong> for 7 days)</li>
         </ul>
         <strong style={{ display: 'block', marginTop: '0.5rem', marginBottom: '0.25rem', color: '#374151' }}>Recommended Action ({prediction.reorder_suggestion_source}):</strong>
         <span style={{ color: '#4b5563', fontSize: '0.9rem' }}>{prediction.recommended_action}</span>

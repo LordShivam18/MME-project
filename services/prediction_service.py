@@ -32,6 +32,14 @@ def get_product_prediction(db: Session, shop_id: int, product_id: int, window_si
         ).scalar() or 0
         avg_daily = recent_sales / 7.0
 
+        # Query last order quantity for comparison
+        last_order = db.query(OrderItem).join(Order, OrderItem.order_id == Order.id).filter(
+            OrderItem.product_id == product_id,
+            Order.organization_id == shop_id,
+            Order.is_deleted == False
+        ).order_by(Order.created_at.desc()).first()
+        last_order_qty = last_order.quantity if last_order else 0
+
         # 2. Supplier Ranking Engine (70% freq / 30% recency)
         orders_data = db.query(Contact.id, Contact.name, Order.created_at).\
             join(Order, Order.contact_id == Contact.id).\
@@ -81,6 +89,7 @@ def get_product_prediction(db: Session, shop_id: int, product_id: int, window_si
             "predicted_daily_demand": insight_record.predicted_daily_demand,
             "current_stock_quantity": current_stock,
             "avg_daily_sales": avg_daily,
+            "last_order_quantity": last_order_qty,
             "recommended_suppliers": ranked_suppliers,
             "reorder_suggestion_source": "Historical Analytics + Core AI Engine"
         }
@@ -94,6 +103,7 @@ def get_product_prediction(db: Session, shop_id: int, product_id: int, window_si
         "predicted_daily_demand": 0.0,
         "current_stock_quantity": 0,
         "avg_daily_sales": 0.0,
+        "last_order_quantity": 0,
         "recommended_suppliers": [],
         "reorder_suggestion_source": "Pending initial scan"
     }

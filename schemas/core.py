@@ -78,6 +78,7 @@ class PredictionResponse(BaseModel):
     predicted_daily_demand: float
     current_stock_quantity: int = 0
     avg_daily_sales: float = 0.0
+    last_order_quantity: int = 0
     reorder_suggestion_source: str = "AI Logic Engine"
     recommended_suppliers: List[Dict[str, Any]] = []
 
