@@ -38,6 +38,11 @@ export default function PredictionWidget({ shopId, productId, onReorder }) {
   }
 
   const isHealthy = prediction.insight === "Stable Demand";
+  const suggestedQty = Math.round((prediction.predicted_daily_demand || 1) * 7);
+  const lastOrderQty = prediction.last_order_quantity || 0;
+  const hasPreviousOrder = lastOrderQty > 0;
+  const delta = suggestedQty - lastOrderQty;
+  const deltaColor = delta > 0 ? '#d97706' : (delta < 0 ? '#10b981' : '#6b7280');
 
   return (
     <div style={{ padding: '1.5rem', border: '2px solid', borderColor: isHealthy ? '#10b981' : '#3b82f6', borderRadius: '12px', background: isHealthy ? '#f0fdf4' : '#eff6ff' }}>
@@ -56,8 +61,17 @@ export default function PredictionWidget({ shopId, productId, onReorder }) {
           <li>Current Stock: <strong>{prediction.current_stock_quantity} units</strong></li>
           <li>Recent Avg Sales: <strong>{prediction.avg_daily_sales?.toFixed(2)} / day</strong></li>
           <li>Predicted Demand: <strong>{prediction.predicted_daily_demand?.toFixed(2)} / day</strong> ({(prediction.predicted_daily_demand > prediction.avg_daily_sales ? '+' : '')}{((prediction.predicted_daily_demand - prediction.avg_daily_sales) / (prediction.avg_daily_sales || 1) * 100).toFixed(0)}% shift vs last 7 days)</li>
-          <li>Last Order Qty: <strong>{prediction.last_order_quantity} units</strong> (AI Suggests: Math.ceil({prediction.predicted_daily_demand?.toFixed(2)} * 7) = <strong>{Math.ceil((prediction.predicted_daily_demand || 1) * 7)} units</strong> for 7 days)</li>
+          <li>
+            AI Suggestion (7 days): <strong>{suggestedQty} units</strong>
+            <span style={{ marginLeft: '0.5rem', fontWeight: 'bold', color: hasPreviousOrder ? deltaColor : '#6b7280' }}>
+              ({hasPreviousOrder ? (delta > 0 ? `▲ +${delta} vs last order` : (delta < 0 ? `▼ ${delta} vs last order` : `Even with last order`)) : 'No previous order to compare'})
+            </span>
+          </li>
         </ul>
+        <div style={{ fontSize: '0.85rem', fontStyle: 'italic', color: '#4b5563', margin: '0.5rem 0 1rem 0' }}>
+          <strong>Reason:</strong> Adjusting for the updated daily demand of {prediction.predicted_daily_demand?.toFixed(2)} units/day to ensure optimal 7-day coverage without overstocking.
+        </div>
+        
         <strong style={{ display: 'block', marginTop: '0.5rem', marginBottom: '0.25rem', color: '#374151' }}>Recommended Action ({prediction.reorder_suggestion_source}):</strong>
         <span style={{ color: '#4b5563', fontSize: '0.9rem' }}>{prediction.recommended_action}</span>
         
@@ -72,7 +86,7 @@ export default function PredictionWidget({ shopId, productId, onReorder }) {
         navigate('/contacts', { 
           state: { 
             prefill_product: productId, 
-            quantity: Math.ceil((prediction.predicted_daily_demand || 1) * 7),
+            quantity: suggestedQty,
             insight_suppliers: prediction.recommended_suppliers || []
           } 
         });
