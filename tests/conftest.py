@@ -11,6 +11,7 @@ with real JWT authentication — zero backend bypass.
 
 import os
 import sys
+import uuid
 import pytest
 
 # ---------------------------------------------------------------------------
@@ -25,6 +26,33 @@ def pytest_collection_modifyitems(config, items):
         marker = pytest.mark.skip(reason="DATABASE_URL not set — skipping API tests")
         for item in items:
             item.add_marker(marker)
+
+
+def pytest_terminal_summary(terminalreporter, exitstatus, config):
+    """Warn loudly when ALL tests were skipped — no real validation ran."""
+    stats = terminalreporter.stats
+    passed = len(stats.get("passed", []))
+    failed = len(stats.get("failed", []))
+    skipped = len(stats.get("skipped", []))
+
+    if skipped > 0 and passed == 0 and failed == 0:
+        terminalreporter.section("SKIP WARNING", sep="!", yellow=True)
+        terminalreporter.write_line(
+            "WARNING: All tests skipped — no real validation executed.",
+            yellow=True,
+        )
+        terminalreporter.write_line(
+            "Set DATABASE_URL to run tests against the backend.",
+            yellow=True,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Unique-ID generator (collision-proof across parallel / repeated runs)
+# ---------------------------------------------------------------------------
+def uid() -> str:
+    """Short UUID segment for unique SKUs, phones, and names."""
+    return uuid.uuid4().hex[:10]
 
 
 # ---------------------------------------------------------------------------
@@ -58,6 +86,41 @@ if _HAS_DB:
 
     @pytest_asyncio.fixture
     async def auth_headers(auth_tokens):
-        """Ready-to-use Authorization header dict."""
+        """Ready-to-use Authorization header dict. Login happens once per test."""
         access_token, _ = auth_tokens
         return {"Authorization": f"Bearer {access_token}"}
+
+    # ------------------------------------------------------------------
+    # Shared test-data helpers (used by product / order / flow tests)
+    # ------------------------------------------------------------------
+    @pytest_asyncio.fixture
+    async def temp_product(client, auth_headers):
+        """Create a temporary product, yield (id, selling_price), then soft-delete."""
+        sku = f"TMP-{uid()}"
+        resp = await client.post("/api/v1/products/", json={
+            "name": f"TempProduct {sku}",
+            "sku": sku,
+            "category": "AutoTest",
+            "cost_price": 10.0,
+            "selling_price": 30.0,
+            "lead_time_days": 3,
+        }, headers=auth_headers)
+        assert resp.status_code == 200, f"temp_product fixture failed: {resp.text}"
+        data = resp.json()
+        yield data["id"], data["selling_price"]
+        # Cleanup — soft-delete
+        await client.delete(f"/api/v1/products/{data['id']}", headers=auth_headers)
+
+    @pytest_asyncio.fixture
+    async def temp_contact(client, auth_headers):
+        """Create a temporary contact, yield its id, then soft-delete."""
+        tag = uid()
+        resp = await client.post("/api/v1/contacts", json={
+            "name": f"TestContact {tag}",
+            "phone": f"999{tag}",
+            "type": "supplier",
+        }, headers=auth_headers)
+        assert resp.status_code == 200, f"temp_contact fixture failed: {resp.text}"
+        cid = resp.json()["id"]
+        yield cid
+        await client.delete(f"/api/v1/contacts/{cid}", headers=auth_headers)

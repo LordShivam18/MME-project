@@ -3,21 +3,18 @@ Product CRUD endpoint tests.
 
 Covers: create, duplicate SKU rejection, list, update, soft-delete.
 All operations go through real /api/v1/* routes with JWT auth.
+Uses UUID-based SKUs — zero collision risk across parallel runs.
 """
 
 import pytest
-import time
-
-
-def _unique_sku():
-    """Timestamp-based SKU to avoid collisions across test runs."""
-    return f"TEST-{int(time.time() * 1000) % 10_000_000}"
+from tests.conftest import uid
 
 
 def _product_payload(sku=None):
+    sku = sku or f"TEST-{uid()}"
     return {
-        "name": f"TestProduct {sku or ''}",
-        "sku": sku or _unique_sku(),
+        "name": f"TestProduct {sku}",
+        "sku": sku,
         "category": "Testing",
         "cost_price": 10.50,
         "selling_price": 25.00,
@@ -40,7 +37,7 @@ async def test_create_product(client, auth_headers):
 
 async def test_duplicate_sku_rejected(client, auth_headers):
     """Same SKU within an org must be rejected."""
-    sku = _unique_sku()
+    sku = f"DUP-{uid()}"
     payload = _product_payload(sku)
 
     # First create succeeds
@@ -66,9 +63,10 @@ async def test_list_products(client, auth_headers):
 
 async def test_update_product(client, auth_headers):
     """Update product fields via PUT."""
-    sku = _unique_sku()
+    sku = f"UPD-{uid()}"
     payload = _product_payload(sku)
     create = await client.post("/api/v1/products/", json=payload, headers=auth_headers)
+    assert create.status_code == 200
     pid = create.json()["id"]
 
     updated = {**payload, "name": "UpdatedName", "selling_price": 50.00}
@@ -83,8 +81,9 @@ async def test_update_product(client, auth_headers):
 
 async def test_soft_delete_excludes_product(client, auth_headers):
     """Soft-deleted product should not appear in list."""
-    sku = _unique_sku()
+    sku = f"DEL-{uid()}"
     create = await client.post("/api/v1/products/", json=_product_payload(sku), headers=auth_headers)
+    assert create.status_code == 200
     pid = create.json()["id"]
 
     # Delete
