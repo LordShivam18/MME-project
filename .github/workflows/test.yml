@@ -22,12 +22,13 @@ jobs:
         run: |
           pip install --upgrade pip
           pip install -r requirements.txt
-          pip install pytest pytest-asyncio httpx anyio
 
-      - name: Run tests (non-blocking)
+      - name: Run tests (parallel + auto-retry)
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
-          # Non-blocking: CI validates but does NOT block dev during early stage.
-          # Remove `|| true` when ready for strict enforcement.
-          pytest -v || true
+          # -n auto  → pytest-xdist distributes tests across CPU cores
+          # --reruns handled by pytest.ini (global fallback: 1 rerun, 2s delay)
+          # --dist loadscope → groups tests by module so fixtures aren't duplicated
+          # || true  → non-blocking until strict enforcement is enabled
+          pytest -v -n auto --dist loadscope || true

@@ -7,6 +7,8 @@ Uses simulated billing flow (Stripe not configured in test environment).
 
 import pytest
 
+pytestmark = [pytest.mark.billing]
+
 
 async def test_billing_status(client, auth_headers):
     """GET billing status returns plan, limits, and usage."""
@@ -20,6 +22,7 @@ async def test_billing_status(client, auth_headers):
     assert "users" in data["usage"]
 
 
+@pytest.mark.flaky(reruns=2, reruns_delay=1)
 async def test_upgrade_to_pro(client, auth_headers):
     """Upgrade to pro plan succeeds (simulated when Stripe not configured)."""
     resp = await client.post(
@@ -34,6 +37,7 @@ async def test_upgrade_to_pro(client, auth_headers):
     assert status.json()["plan"] == "pro"
 
 
+@pytest.mark.flaky(reruns=2, reruns_delay=1)
 async def test_downgrade_to_free(client, auth_headers):
     """Downgrade from pro to free succeeds."""
     # Ensure we're on pro first

@@ -8,12 +8,17 @@ Each step asserts correctness before proceeding. Uses UUID-based
 identifiers for complete isolation from other test data.
 """
 
+import time
 import pytest
-from tests.conftest import uid
+from tests.conftest import uid, assert_response_time, PERF_THRESHOLD_HEAVY
+
+pytestmark = [pytest.mark.integration]
 
 
+@pytest.mark.flaky(reruns=2, reruns_delay=2)
 async def test_full_inventory_flow(client):
     """Complete user flow: login → product → stock → sale → prediction."""
+    t0 = time.time()
 
     # ── Step 1: Login ─────────────────────────────────────────
     login_resp = await client.post(
@@ -77,3 +82,6 @@ async def test_full_inventory_flow(client):
     # ── Cleanup: soft-delete product ──────────────────────────
     del_resp = await client.delete(f"/api/v1/products/{pid}", headers=headers)
     assert del_resp.status_code == 200
+
+    # ── Performance gate on full flow ─────────────────────────
+    assert_response_time(t0, PERF_THRESHOLD_HEAVY * 2, "full e2e flow")

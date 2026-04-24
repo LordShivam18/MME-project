@@ -12,7 +12,15 @@ with real JWT authentication — zero backend bypass.
 import os
 import sys
 import uuid
+import time
 import pytest
+
+# ---------------------------------------------------------------------------
+# Performance thresholds (seconds) — generous for cold-start / free-tier DBs
+# ---------------------------------------------------------------------------
+PERF_THRESHOLD_FAST = 2.0       # simple reads (list, status)
+PERF_THRESHOLD_STANDARD = 5.0   # writes + auth (create, login)
+PERF_THRESHOLD_HEAVY = 10.0     # multi-step (orders, predictions)
 
 # ---------------------------------------------------------------------------
 # Guard: skip every test when the database is unreachable
@@ -53,6 +61,16 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
 def uid() -> str:
     """Short UUID segment for unique SKUs, phones, and names."""
     return uuid.uuid4().hex[:10]
+
+
+def assert_response_time(start: float, threshold: float, label: str = ""):
+    """Assert that elapsed time since `start` is within `threshold` seconds."""
+    elapsed = time.time() - start
+    assert elapsed < threshold, (
+        f"Performance violation{f' ({label})' if label else ''}: "
+        f"{elapsed:.2f}s > {threshold:.1f}s threshold"
+    )
+    return elapsed
 
 
 # ---------------------------------------------------------------------------

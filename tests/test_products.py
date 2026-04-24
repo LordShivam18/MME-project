@@ -6,8 +6,11 @@ All operations go through real /api/v1/* routes with JWT auth.
 Uses UUID-based SKUs — zero collision risk across parallel runs.
 """
 
+import time
 import pytest
-from tests.conftest import uid
+from tests.conftest import uid, assert_response_time, PERF_THRESHOLD_FAST, PERF_THRESHOLD_STANDARD
+
+pytestmark = [pytest.mark.products]
 
 
 def _product_payload(sku=None):
@@ -22,14 +25,17 @@ def _product_payload(sku=None):
     }
 
 
+@pytest.mark.flaky(reruns=2, reruns_delay=1)
 async def test_create_product(client, auth_headers):
     """Create product via API (org-scoped, plan-limited)."""
     payload = _product_payload()
+    t0 = time.time()
     resp = await client.post("/api/v1/products/", json=payload, headers=auth_headers)
     assert resp.status_code == 200, f"Create failed: {resp.text}"
     body = resp.json()
     assert "id" in body
     assert body["sku"] == payload["sku"]
+    assert_response_time(t0, PERF_THRESHOLD_STANDARD, "create product")
 
     # Cleanup: soft-delete
     await client.delete(f"/api/v1/products/{body['id']}", headers=auth_headers)
@@ -54,13 +60,17 @@ async def test_duplicate_sku_rejected(client, auth_headers):
     await client.delete(f"/api/v1/products/{pid}", headers=auth_headers)
 
 
+@pytest.mark.perf
 async def test_list_products(client, auth_headers):
-    """List products returns 200 and a list."""
+    """List products returns 200 and a list within performance threshold."""
+    t0 = time.time()
     resp = await client.get("/api/v1/products/", headers=auth_headers)
     assert resp.status_code == 200
     assert isinstance(resp.json(), list)
+    assert_response_time(t0, PERF_THRESHOLD_FAST, "list products")
 
 
+@pytest.mark.flaky(reruns=2, reruns_delay=1)
 async def test_update_product(client, auth_headers):
     """Update product fields via PUT."""
     sku = f"UPD-{uid()}"

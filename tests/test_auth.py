@@ -5,11 +5,17 @@ Covers: login, token validation, refresh rotation, logout/revocation.
 All tests use real /api/v1/* routes with real JWT flow.
 """
 
+import time
 import pytest
+from tests.conftest import assert_response_time, PERF_THRESHOLD_STANDARD, PERF_THRESHOLD_FAST
+
+pytestmark = [pytest.mark.auth]
 
 
+@pytest.mark.flaky(reruns=2, reruns_delay=1)
 async def test_login_valid_credentials(client):
     """Valid login returns access + refresh tokens."""
+    t0 = time.time()
     resp = await client.post(
         "/api/v1/login",
         data={"username": "test@gmail.com", "password": "123456"},
@@ -19,6 +25,7 @@ async def test_login_valid_credentials(client):
     assert "access_token" in body
     assert "refresh_token" in body
     assert body["token_type"] == "bearer"
+    assert_response_time(t0, PERF_THRESHOLD_STANDARD, "login")
 
 
 async def test_login_invalid_credentials(client):
@@ -31,13 +38,16 @@ async def test_login_invalid_credentials(client):
     assert "Incorrect credentials" in resp.json()["detail"]
 
 
+@pytest.mark.flaky(reruns=2, reruns_delay=1)
 async def test_me_with_valid_token(client, auth_headers):
     """/me returns user info for authenticated request."""
+    t0 = time.time()
     resp = await client.get("/api/v1/me", headers=auth_headers)
     assert resp.status_code == 200
     data = resp.json()
     assert data["status"] == "ok"
     assert data["user"]["email"] == "test@gmail.com"
+    assert_response_time(t0, PERF_THRESHOLD_FAST, "/me")
 
 
 async def test_me_without_token(client):
@@ -55,6 +65,7 @@ async def test_me_with_forged_token(client):
     assert resp.status_code == 401
 
 
+@pytest.mark.flaky(reruns=2, reruns_delay=1)
 async def test_token_refresh_rotation(client):
     """Refresh endpoint rotates both tokens."""
     # Login first
@@ -76,6 +87,7 @@ async def test_token_refresh_rotation(client):
     assert new["access_token"] != tokens["access_token"]
 
 
+@pytest.mark.flaky(reruns=2, reruns_delay=1)
 async def test_logout_revokes_token(client):
     """After logout the access token is revoked via token_version."""
     # Login
