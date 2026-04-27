@@ -10,6 +10,7 @@ import Pricing from './pages/Pricing';
 import Onboarding from './pages/Onboarding';
 import Contacts from './pages/Contacts';
 import ProfitDashboard from './pages/ProfitDashboard';
+import Settings from './pages/Settings';
 
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -94,6 +95,12 @@ function App() {
         <Route path="/onboarding" element={
           <ProtectedRoute>
             <Onboarding />
+          </ProtectedRoute>
+        } />
+        
+        <Route path="/settings" element={
+          <ProtectedRoute>
+            <Settings />
           </ProtectedRoute>
         } />
         

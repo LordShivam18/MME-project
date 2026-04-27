@@ -328,8 +328,19 @@ def logout(background_tasks: BackgroundTasks, db: Session = Depends(get_db), cur
 
 @router.get("/me")
 @limiter.limit("100/minute")
-def validate_token(request: Request, current_user: dict = Depends(get_current_user)):
-    return {"status": "ok", "user": current_user}
+def validate_token(request: Request, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    org_id = _org_id(current_user)
+    org = db.query(models.Organization).filter(models.Organization.id == org_id).first()
+    
+    return {
+        "status": "ok", 
+        "user": current_user,
+        "organization": {
+            "id": org.id,
+            "name": org.name,
+            "ai_decision_mode": org.ai_decision_mode
+        } if org else None
+    }
 
 
 # ============================================================
@@ -685,8 +696,11 @@ def delete_product(product_id: int, background_tasks: BackgroundTasks, db: Sessi
 # ============================================================
 @router.get("/predictions/{product_id}")
 @limiter.limit("20/minute")
-def get_prediction_insights(request: Request, product_id: int, window_size_days: int = 14, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+def get_prediction_insights(request: Request, product_id: int, window_size_days: int = 14, debug: bool = False, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     org_id = _org_id(current_user)
+    
+    if debug and current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Debug mode requires admin privileges")
     
     # 🔴 SaaS: Subscription gate (predictions require active plan)
     require_active_subscription(db, org_id)
@@ -694,11 +708,73 @@ def get_prediction_insights(request: Request, product_id: int, window_size_days:
     # 🔴 Guard: prevent predictions on deleted product
     _check_product_not_deleted(db, product_id, current_user)
     try:
-        result = get_product_prediction(db, org_id, product_id, window_size_days)
+        result = get_product_prediction(db, org_id, product_id, window_size_days, debug)
         return result
     except Exception as e:
         logger.error("PREDICTION ERROR: %s", str(e))
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/ai/performance", response_model=schemas.AIPerformanceResponse)
+def get_ai_performance(request: Request, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    org_id = _org_id(current_user)
+    
+    adjustments = db.query(models.OrderAdjustment).filter(
+        models.OrderAdjustment.organization_id == org_id
+    ).all()
+    
+    def calc_metrics(data):
+        if not data:
+            return {"avg_error_percentage": 0.0, "over_order_rate": 0.0, "under_order_rate": 0.0}
+            
+        total_error_pct = 0.0
+        over_count = 0
+        under_count = 0
+        
+        for adj in data:
+            actual = adj.actual_qty
+            suggested = adj.suggested_qty
+            
+            if actual > 0:
+                total_error_pct += abs(suggested - actual) / actual
+            elif suggested > 0:
+                total_error_pct += 1.0 # 100% error if actual is 0 but suggested > 0
+                
+            if actual > suggested:
+                over_count += 1
+            elif actual < suggested:
+                under_count += 1
+                
+        n = len(data)
+        return {
+            "avg_error_percentage": round((total_error_pct / n) * 100, 2),
+            "over_order_rate": round((over_count / n) * 100, 2),
+            "under_order_rate": round((under_count / n) * 100, 2)
+        }
+        
+    cutoff_30d = datetime.utcnow() - timedelta(days=30)
+    recent_adj = [a for a in adjustments if a.created_at >= cutoff_30d]
+    
+    return {
+        "last_30_days": calc_metrics(recent_adj),
+        "all_time": calc_metrics(adjustments)
+    }
+
+@router.patch("/settings/ai-mode", response_model=schemas.OrganizationResponse)
+def update_ai_decision_mode(request: Request, payload: schemas.OrganizationModeUpdate, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Only admins can change the AI decision mode.")
+        
+    org_id = _org_id(current_user)
+    org = db.query(models.Organization).filter(models.Organization.id == org_id).first()
+    
+    if payload.ai_decision_mode not in ["conservative", "balanced", "aggressive"]:
+        raise HTTPException(status_code=400, detail="Invalid ai_decision_mode. Use conservative, balanced, or aggressive.")
+        
+    org.ai_decision_mode = payload.ai_decision_mode
+    db.commit()
+    db.refresh(org)
+    
+    return org
 
 
 # ============================================================

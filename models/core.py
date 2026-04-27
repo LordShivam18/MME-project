@@ -9,6 +9,7 @@ class Organization(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, nullable=False)
     stripe_customer_id = Column(String, nullable=True, unique=True, index=True)
+    ai_decision_mode = Column(String, default="balanced", nullable=False, server_default="balanced")
     is_deleted = Column(Boolean, default=False, nullable=False, server_default="false")
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -201,6 +202,8 @@ class ProductInsight(Base):
     is_dead_stock = Column(Boolean, default=False)
     anomaly_flags = Column(String, nullable=True)        # JSON string
     weekday_pattern = Column(String, nullable=True)      # JSON string
+    product_behavior_profile = Column(String, default="standard")
+    last_profile_updated_at = Column(DateTime, nullable=True)
     generated_at = Column(DateTime, default=datetime.utcnow)
     model_version = Column(String, default="1.0.0")
 

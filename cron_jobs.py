@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 import json
 from database import SessionLocal
 from models.core import Product, Inventory, Sale, ProductInsight, Notification
-from logic_engine import DemandPredictor, RiskAnalyzer, AnomalyDetector, ConfidenceScorer
+from logic_engine import DemandPredictor, RiskAnalyzer, AnomalyDetector, ConfidenceScorer, ProductProfiler
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +76,10 @@ def run_daily_ai_insights():
             # 4. Confidence Score
             confidence = ConfidenceScorer.calculate_confidence(sales_data_30d, last_sale_days_ago)
             
+            # 5. Product Profiler
+            profile = ProductProfiler.classify_product(sales_data_30d, product.selling_price, product.cost_price)
+            
+            
             # Construct insights text
             insight_text = "Stable Demand"
             action_text = "Maintain inventory levels"
@@ -132,6 +136,8 @@ def run_daily_ai_insights():
             insight_record.is_dead_stock = is_dead_stock
             insight_record.anomaly_flags = anomaly_flags
             insight_record.weekday_pattern = json.dumps(weekday_multipliers)
+            insight_record.product_behavior_profile = profile
+            insight_record.last_profile_updated_at = datetime.utcnow()
             insight_record.generated_at = datetime.utcnow()
             insight_record.model_version = "1.1.0"
             

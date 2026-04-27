@@ -1,8 +1,8 @@
 import logging
 import json
 from sqlalchemy.orm import Session
-from models.core import Product, Inventory, Sale, ProductInsight, Contact, Order, OrderItem
-from logic_engine import SupplierScorer
+from models.core import Product, Inventory, Sale, ProductInsight, Contact, Order, OrderItem, Organization
+from logic_engine import SupplierScorer, ExplainabilityEngine
 from sqlalchemy import func
 from datetime import datetime, timedelta
 
@@ -12,7 +12,7 @@ def invalidate_prediction_cache(shop_id: int, product_id: int):
     # No longer needed - predictions are pre-computed daily via cron.
     pass
 
-def get_product_prediction(db: Session, shop_id: int, product_id: int, window_size: int = 14):
+def get_product_prediction(db: Session, shop_id: int, product_id: int, window_size: int = 14, debug: bool = False):
     """Returns pre-computed AI insights from DB, achieving O(1) latency."""
     logger.info(f"Fetching precomputed AI insight for product_id: {product_id}")
     
@@ -21,6 +21,15 @@ def get_product_prediction(db: Session, shop_id: int, product_id: int, window_si
         ProductInsight.organization_id == shop_id
     ).first()
     
+    org = db.query(Organization).filter(Organization.id == shop_id).first()
+    ai_decision_mode = org.ai_decision_mode if org else "balanced"
+    
+    multiplier = 1.0
+    if ai_decision_mode == "conservative":
+        multiplier = 1.2
+    elif ai_decision_mode == "aggressive":
+        multiplier = 0.85
+        
     if insight_record:
         # 1. Live Context Stats
         inv = db.query(Inventory).filter(Inventory.product_id == product_id, Inventory.shop_id == shop_id).first()
@@ -98,12 +107,46 @@ def get_product_prediction(db: Session, shop_id: int, product_id: int, window_si
         except:
             weekday_pattern = {}
 
+        explanation_points = ExplainabilityEngine.generate_explanation(insight_record, current_stock, avg_daily)
+
+        debug_data = None
+        if debug:
+            cutoff_30d = datetime.utcnow() - timedelta(days=30)
+            sales_records = db.query(Sale).filter(
+                Sale.product_id == product_id,
+                Sale.sale_date >= cutoff_30d
+            ).order_by(Sale.sale_date.asc()).all()
+            
+            sales_by_date = {}
+            for s in sales_records:
+                date_str = s.sale_date.strftime("%Y-%m-%d")
+                sales_by_date[date_str] = sales_by_date.get(date_str, 0) + s.quantity_sold
+                
+            sales_data_30d = []
+            for i in range(29, -1, -1):
+                d_str = (datetime.utcnow() - timedelta(days=i)).strftime("%Y-%m-%d")
+                sales_data_30d.append(sales_by_date.get(d_str, 0))
+                
+            from logic_engine import DemandPredictor
+            weights = DemandPredictor._get_exponential_weights(len(sales_data_30d[-14:]) if len(sales_data_30d[-14:]) > 0 else 0)
+            
+            debug_data = {
+                "raw_sales_data": sales_data_30d,
+                "weights_used": weights,
+                "anomaly_flags": anomaly_flags,
+                "risk_scores": {
+                    "stockout": insight_record.stockout_risk,
+                    "overstock": insight_record.overstock_risk,
+                    "dead_stock": insight_record.is_dead_stock
+                }
+            }
+
         return {
             "product_id": insight_record.product_id,
             "insight": insight_record.insight,
             "recommended_action": insight_record.recommended_action,
             "confidence_score": insight_record.confidence_score,
-            "predicted_daily_demand": insight_record.predicted_daily_demand,
+            "predicted_daily_demand": insight_record.predicted_daily_demand * multiplier,
             "current_stock_quantity": current_stock,
             "avg_daily_sales": avg_daily,
             "last_order_quantity": last_order_qty,
@@ -111,13 +154,16 @@ def get_product_prediction(db: Session, shop_id: int, product_id: int, window_si
             "reorder_suggestion_source": "Historical Analytics + Core AI Engine",
             
             # AI Engine Upgrades
-            "demand_min": getattr(insight_record, 'demand_min', 0.0) or 0.0,
-            "demand_max": getattr(insight_record, 'demand_max', 0.0) or 0.0,
+            "demand_min": (getattr(insight_record, 'demand_min', 0.0) or 0.0) * multiplier,
+            "demand_max": (getattr(insight_record, 'demand_max', 0.0) or 0.0) * multiplier,
             "stockout_risk": getattr(insight_record, 'stockout_risk', "none") or "none",
             "overstock_risk": getattr(insight_record, 'overstock_risk', "none") or "none",
             "is_dead_stock": getattr(insight_record, 'is_dead_stock', False) or False,
             "anomaly_flags": anomaly_flags,
             "weekday_pattern": weekday_pattern,
+            "product_behavior_profile": getattr(insight_record, 'product_behavior_profile', "standard") or "standard",
+            "explanation_points": explanation_points,
+            "raw_debug_data": debug_data,
             "generated_at": getattr(insight_record, 'generated_at', None),
             "model_version": getattr(insight_record, 'model_version', "1.0.0") or "1.0.0"
         }
@@ -143,6 +189,9 @@ def get_product_prediction(db: Session, shop_id: int, product_id: int, window_si
         "is_dead_stock": False,
         "anomaly_flags": [],
         "weekday_pattern": {},
+        "product_behavior_profile": "standard",
+        "explanation_points": ["No AI insights available yet."],
+        "raw_debug_data": None,
         "generated_at": None,
         "model_version": "1.0.0"
     }

@@ -25,6 +25,9 @@ export default function ProfitDashboard() {
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [modalLoading, setModalLoading] = useState(false);
   const [modalData, setModalData] = useState(null);
+  
+  const [aiPerformance, setAiPerformance] = useState(null);
+  const [aiMode, setAiMode] = useState("balanced");
 
   useEffect(() => {
     const initData = async () => {
@@ -37,6 +40,18 @@ export default function ProfitDashboard() {
             setIsLoading(false);
             // Stale-while-revalidate: Do NOT return, let background fetch proceed seamlessly
           }
+        }
+
+        const meRes = await axiosClient.get('/api/v1/me');
+        if (meRes.data?.organization?.ai_decision_mode) {
+          setAiMode(meRes.data.organization.ai_decision_mode);
+        }
+
+        try {
+          const perfRes = await axiosClient.get('/api/v1/ai/performance');
+          setAiPerformance(perfRes.data);
+        } catch (e) {
+          console.error("AI Performance Error:", e);
         }
 
         const pRes = await axiosClient.get('/api/v1/products/?limit=50');
@@ -192,8 +207,35 @@ export default function ProfitDashboard() {
             <h1 style={{ fontSize: '2rem', fontWeight: '800', color: '#0f172a', margin: '0 0 0.5rem 0' }}>Profit Intelligence</h1>
             <p style={{ color: '#64748b', margin: 0, fontSize: '1.1rem' }}>Estimated performance insights structured against 7-Day UTC periods.</p>
           </div>
-          <button onClick={() => { localStorage.removeItem(SUMMARY_CACHE_KEY); window.location.reload(); }} className="btn-action" style={{ background: '#e2e8f0', color: '#475569' }}>↻ Hard Sync</button>
+          <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+            <div style={{ background: '#e0e7ff', color: '#4338ca', padding: '0.5rem 1rem', borderRadius: '8px', fontWeight: 'bold' }}>
+              AI Mode: {aiMode.toUpperCase()}
+            </div>
+            <button onClick={() => navigate('/settings')} className="btn-action" style={{ background: '#f8fafc', border: '1px solid #cbd5e1', color: '#475569' }}>⚙️ Settings</button>
+            <button onClick={() => { localStorage.removeItem(SUMMARY_CACHE_KEY); window.location.reload(); }} className="btn-action" style={{ background: '#e2e8f0', color: '#475569' }}>↻ Hard Sync</button>
+          </div>
         </div>
+        
+        {/* AI PERFORMANCE WIDGET */}
+        {aiPerformance && (
+          <div className="glass-card" style={{ padding: '1.5rem', marginBottom: '2rem', borderLeft: '4px solid #8b5cf6' }}>
+            <h3 style={{ color: '#6d28d9', margin: '0 0 1rem 0' }}>AI Decision Performance (Last 30 Days)</h3>
+            <div style={{ display: 'flex', gap: '2rem', flexWrap: 'wrap' }}>
+              <div>
+                <div style={{ color: '#64748b', fontSize: '0.9rem' }}>Avg Quantity Error</div>
+                <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#0f172a' }}>{aiPerformance.last_30_days?.avg_error_percentage || 0}%</div>
+              </div>
+              <div>
+                <div style={{ color: '#64748b', fontSize: '0.9rem' }}>Over-Order Rate</div>
+                <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#f59e0b' }}>{aiPerformance.last_30_days?.over_order_rate || 0}%</div>
+              </div>
+              <div>
+                <div style={{ color: '#64748b', fontSize: '0.9rem' }}>Under-Order Rate</div>
+                <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#3b82f6' }}>{aiPerformance.last_30_days?.under_order_rate || 0}%</div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* SUMMARY CARDS */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '1.5rem', marginBottom: '3rem' }}>

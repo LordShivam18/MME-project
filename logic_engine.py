@@ -233,3 +233,64 @@ class InventoryLogic:
         target_inventory_level = reorder_point + (predicted_daily_demand * dynamic_restock_cycle)
         order_quantity = target_inventory_level - current_inventory
         return max(0.0, order_quantity)
+
+class ProductProfiler:
+    @staticmethod
+    def classify_product(sales_data: list, selling_price: float, cost_price: float) -> str:
+        if not sales_data:
+            return "standard"
+            
+        margin = selling_price - cost_price if selling_price and cost_price else 0
+        margin_pct = (margin / selling_price) if selling_price else 0
+        
+        avg_daily_sales = sum(sales_data) / len(sales_data) if sales_data else 0
+        
+        if avg_daily_sales > 10:
+            return "fast_moving"
+        elif margin_pct < 0.15:
+            return "low_margin"
+        elif margin_pct > 0.5:
+            return "high_margin"
+            
+        # Simplistic seasonality check: if variance is very high but sales are low on average
+        mean = sum(sales_data) / len(sales_data)
+        if mean > 0:
+            variance = sum((x - mean) ** 2 for x in sales_data) / len(sales_data)
+            cv = math.sqrt(variance) / mean
+            if cv > 2.0 and mean > 2:
+                return "seasonal"
+                
+        return "standard"
+
+class ExplainabilityEngine:
+    @staticmethod
+    def generate_explanation(insight_record, current_stock: float, avg_daily_sales: float) -> list:
+        points = []
+        
+        if not insight_record:
+            return ["No AI insights available yet."]
+            
+        # 1. Demand Trend
+        if insight_record.predicted_daily_demand > avg_daily_sales * 1.2:
+            points.append(f"Demand is trending upwards. Predicted daily demand ({insight_record.predicted_daily_demand:.1f}) is higher than recent average ({avg_daily_sales:.1f}).")
+        elif insight_record.predicted_daily_demand < avg_daily_sales * 0.8:
+            points.append(f"Demand is trending downwards. Predicted daily demand ({insight_record.predicted_daily_demand:.1f}) is lower than recent average ({avg_daily_sales:.1f}).")
+        else:
+            points.append(f"Demand is stable at approximately {insight_record.predicted_daily_demand:.1f} units per day.")
+            
+        # 2. Stockout reasoning
+        if insight_record.stockout_risk == "critical":
+            points.append("Stockout risk is CRITICAL. Current stock will not cover the supplier lead time.")
+        elif insight_record.stockout_risk == "high":
+            points.append("Stockout risk is HIGH. Consider restocking immediately.")
+        elif insight_record.stockout_risk == "none":
+            points.append(f"Current stock levels ({current_stock} units) are sufficient.")
+            
+        # 3. Confidence reasoning
+        confidence = getattr(insight_record, 'confidence_score', 0)
+        if confidence > 80:
+            points.append("High confidence in prediction due to stable and recent sales data.")
+        elif confidence < 50:
+            points.append("Low confidence in prediction due to irregular or stale sales data.")
+            
+        return points

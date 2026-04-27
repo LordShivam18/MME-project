@@ -90,11 +90,18 @@ class PredictionResponse(BaseModel):
     is_dead_stock: bool = False
     anomaly_flags: List[str] = []
     weekday_pattern: Dict[str, float] = {}
+    product_behavior_profile: str = "standard"
+    explanation_points: List[str] = []
+    raw_debug_data: Optional[Dict[str, Any]] = None
     generated_at: Optional[datetime] = None
     model_version: str = "1.0.0"
 
     class Config:
         from_attributes = True
+
+class AIPerformanceResponse(BaseModel):
+    last_30_days: Dict[str, float]
+    all_time: Dict[str, float]
 
 # --- Notification Schemas ---
 class NotificationResponse(BaseModel):
@@ -172,3 +179,6 @@ class OrderResponse(BaseModel):
 
     class Config:
         from_attributes = True
+class OrganizationModeUpdate(BaseModel):
+    ai_decision_mode: str
+

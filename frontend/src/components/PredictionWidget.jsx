@@ -56,11 +56,28 @@ export default function PredictionWidget({ shopId, productId, onReorder }) {
       <p style={{ margin: '0.2rem 0', color: '#6b7280', fontSize: '0.9rem' }}>Est. Daily Demand: {(Number(prediction?.predicted_daily_demand || 0)).toFixed(2)} units</p>
       
       <div style={{ marginTop: '1rem', padding: '1rem', background: '#ffffff', borderRadius: '8px', borderLeft: '4px solid #3b82f6' }}>
-        <strong style={{ display: 'block', marginBottom: '0.25rem', color: '#374151' }}>Reasoning Data:</strong>
-        <ul style={{ color: '#4b5563', margin: '0.5rem 0', paddingLeft: '1.2rem', fontSize: '0.9rem' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+          <strong style={{ color: '#374151' }}>Why this suggestion?</strong>
+          {prediction.product_behavior_profile && (
+            <span style={{ background: '#e0e7ff', color: '#4338ca', padding: '2px 8px', borderRadius: '12px', fontSize: '0.75rem', fontWeight: 'bold' }}>
+              {prediction.product_behavior_profile.replace('_', ' ').toUpperCase()}
+            </span>
+          )}
+        </div>
+        
+        {prediction.explanation_points && prediction.explanation_points.length > 0 && (
+          <ul style={{ color: '#4b5563', margin: '0.5rem 0', paddingLeft: '1.2rem', fontSize: '0.9rem' }}>
+            {prediction.explanation_points.map((pt, i) => (
+              <li key={i} style={{ marginBottom: '4px' }}>{pt}</li>
+            ))}
+          </ul>
+        )}
+        
+        <strong style={{ display: 'block', marginTop: '1rem', marginBottom: '0.25rem', color: '#374151' }}>Metrics:</strong>
+        <ul style={{ color: '#4b5563', margin: '0.5rem 0', paddingLeft: '1.2rem', fontSize: '0.85rem' }}>
           <li>Current Stock: <strong>{prediction.current_stock_quantity} units</strong></li>
           <li>Recent Avg Sales: <strong>{prediction.avg_daily_sales?.toFixed(2)} / day</strong></li>
-          <li>Predicted Demand: <strong>{prediction.predicted_daily_demand?.toFixed(2)} / day</strong> ({(prediction.predicted_daily_demand > prediction.avg_daily_sales ? '+' : '')}{((prediction.predicted_daily_demand - prediction.avg_daily_sales) / (prediction.avg_daily_sales || 1) * 100).toFixed(0)}% shift vs last 7 days)</li>
+          <li>Predicted Demand: <strong>{prediction.predicted_daily_demand?.toFixed(2)} / day</strong></li>
           <li>
             AI Suggestion (7 days): <strong>{suggestedQty} units</strong>
             <span style={{ marginLeft: '0.5rem', fontWeight: 'bold', color: hasPreviousOrder ? deltaColor : '#6b7280' }}>
@@ -68,9 +85,6 @@ export default function PredictionWidget({ shopId, productId, onReorder }) {
             </span>
           </li>
         </ul>
-        <div style={{ fontSize: '0.85rem', fontStyle: 'italic', color: '#4b5563', margin: '0.5rem 0 1rem 0' }}>
-          <strong>Reason:</strong> Adjusting for the updated daily demand of {prediction.predicted_daily_demand?.toFixed(2)} units/day to ensure optimal 7-day coverage without overstocking.
-        </div>
         
         <strong style={{ display: 'block', marginTop: '0.5rem', marginBottom: '0.25rem', color: '#374151' }}>Recommended Action ({prediction.reorder_suggestion_source}):</strong>
         <span style={{ color: '#4b5563', fontSize: '0.9rem' }}>{prediction.recommended_action}</span>
