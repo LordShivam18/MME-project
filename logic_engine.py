@@ -363,3 +363,48 @@ class ExplainabilityEngine:
             points.append("Low confidence in prediction due to irregular or stale sales data.")
             
         return points
+
+class AdvisorEngine:
+    @staticmethod
+    def generate_recommendation(
+        priority_score: float,
+        predicted_demand: float,
+        avg_daily_sales: float,
+        stockout_risk: str,
+        overstock_risk: str,
+        is_dead_stock: bool,
+        profit_margin_norm: float
+    ) -> str:
+        """
+        Generates a clear, actionable human-readable recommendation 
+        based on risk, demand trend, and margins.
+        """
+        if is_dead_stock:
+            return "Liquidate inventory immediately due to dead stock detection."
+            
+        if overstock_risk in ["high", "critical"]:
+            return "Reduce stock due to low demand and overstock risk."
+            
+        if stockout_risk in ["high", "critical"]:
+            if profit_margin_norm > 0.5:
+                return "Increase stock urgently due to high stockout risk on a high-margin product."
+            return "Restock soon to prevent imminent stockout."
+            
+        demand_trend = "stable"
+        if predicted_demand > avg_daily_sales * 1.2:
+            demand_trend = "rising"
+        elif predicted_demand < avg_daily_sales * 0.8:
+            demand_trend = "falling"
+            
+        if demand_trend == "rising":
+            if profit_margin_norm >= 0.4:
+                return "Increase stock due to rising demand and strong margins."
+            return "Increase stock to meet rising demand trend."
+            
+        if demand_trend == "falling":
+            return "Maintain lean inventory due to falling demand."
+            
+        if priority_score > 0.7:
+            return "Maintain optimal inventory levels for this high-priority product."
+            
+        return "Maintain current stock levels. No urgent action required."

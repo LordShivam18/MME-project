@@ -2,7 +2,7 @@ import logging
 import json
 from sqlalchemy.orm import Session
 from models.core import Product, Inventory, Sale, ProductInsight, Contact, Order, OrderItem, Organization
-from logic_engine import SupplierScorer, ExplainabilityEngine
+from logic_engine import SupplierScorer, ExplainabilityEngine, AdvisorEngine
 from sqlalchemy import func
 from datetime import datetime, timedelta
 
@@ -111,6 +111,17 @@ def get_product_prediction(db: Session, shop_id: int, product_id: int, window_si
             weekday_pattern = {}
 
         explanation_points = ExplainabilityEngine.generate_explanation(insight_record, current_stock, avg_daily)
+        
+        # 3. AI Advisor Layer
+        recommendation_text = AdvisorEngine.generate_recommendation(
+            priority_score=getattr(insight_record, 'priority_score', 0.0) or 0.0,
+            predicted_demand=insight_record.predicted_daily_demand,
+            avg_daily_sales=avg_daily,
+            stockout_risk=getattr(insight_record, 'stockout_risk', "none") or "none",
+            overstock_risk=getattr(insight_record, 'overstock_risk', "none") or "none",
+            is_dead_stock=getattr(insight_record, 'is_dead_stock', False) or False,
+            profit_margin_norm=getattr(insight_record, 'priority_margin_norm', 0.0) or 0.0
+        )
 
         debug_data = None
         if debug:
@@ -166,6 +177,7 @@ def get_product_prediction(db: Session, shop_id: int, product_id: int, window_si
             "weekday_pattern": weekday_pattern,
             "product_behavior_profile": getattr(insight_record, 'product_behavior_profile', "standard") or "standard",
             "explanation_points": explanation_points,
+            "recommendation_text": recommendation_text,
             
             # Adaptive AI Upgrades
             "bias_factor": bias_factor,
@@ -203,6 +215,7 @@ def get_product_prediction(db: Session, shop_id: int, product_id: int, window_si
         "weekday_pattern": {},
         "product_behavior_profile": "standard",
         "explanation_points": ["No AI insights available yet."],
+        "recommendation_text": "Check back tomorrow for AI insights.",
         
         # Adaptive AI Upgrades
         "bias_factor": 0.0,

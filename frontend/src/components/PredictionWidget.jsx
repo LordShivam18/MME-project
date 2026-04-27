@@ -89,6 +89,17 @@ export default function PredictionWidget({ shopId, productId, onReorder }) {
         <strong style={{ display: 'block', marginTop: '0.5rem', marginBottom: '0.25rem', color: '#374151' }}>Recommended Action ({prediction.reorder_suggestion_source}):</strong>
         <span style={{ color: '#4b5563', fontSize: '0.9rem' }}>{prediction.recommended_action}</span>
         
+        {prediction.recommendation_text && (
+          <div style={{ marginTop: '1rem', padding: '1rem', background: '#fef3c7', border: '1px solid #f59e0b', borderRadius: '8px' }}>
+            <strong style={{ color: '#b45309', display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+              <span>💡</span> AI Advisor
+            </strong>
+            <div style={{ color: '#92400e', fontSize: '0.95rem', fontWeight: 600 }}>
+              {prediction.recommendation_text}
+            </div>
+          </div>
+        )}
+        
         {prediction.recommended_suppliers && prediction.recommended_suppliers.length > 0 && (
           <div style={{ marginTop: '0.5rem', fontSize: '0.85rem', color: '#6b7280' }}>
             <strong>Top Recommended Supplier:</strong> {prediction.recommended_suppliers[0].name}

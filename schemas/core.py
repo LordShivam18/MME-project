@@ -92,6 +92,7 @@ class PredictionResponse(BaseModel):
     weekday_pattern: Dict[str, float] = {}
     product_behavior_profile: str = "standard"
     explanation_points: List[str] = []
+    recommendation_text: str = ""
     
     # Adaptive AI Upgrades
     bias_factor: float = 0.0
