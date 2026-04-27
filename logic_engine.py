@@ -27,10 +27,10 @@ class DemandPredictor:
         weights = [(1 - alpha) ** i for i in range(window)]
         weights.reverse()
         total = sum(weights)
-        return [w / total for w in weights]
+        return [w / total for w in weights] if total > 0 else [0] * window
 
     @staticmethod
-    def calculate_wma(sales_data: list, window: int = 14) -> tuple:
+    def calculate_wma(sales_data: list, window: int = 14, alpha: float = 0.3) -> tuple:
         """
         Calculates Weighted Moving Average using exponential weights.
         Returns: (mean, min_demand, max_demand)
@@ -44,7 +44,7 @@ class DemandPredictor:
         if window_size == 0:
             return 0.0, 0.0, 0.0
             
-        weights = DemandPredictor._get_exponential_weights(window_size)
+        weights = DemandPredictor._get_exponential_weights(window_size, alpha)
         mean_demand = sum(val * w for val, w in zip(data, weights))
         
         # Calculate standard deviation for range
@@ -233,6 +233,55 @@ class InventoryLogic:
         target_inventory_level = reorder_point + (predicted_daily_demand * dynamic_restock_cycle)
         order_quantity = target_inventory_level - current_inventory
         return max(0.0, order_quantity)
+
+class AdaptiveLearner:
+    @staticmethod
+    def compute_bias_factor(adjustments: list) -> float:
+        """
+        Computes the bias factor based on historical user adjustments.
+        Clamps the factor between -0.3 and 0.3.
+        """
+        if not adjustments:
+            return 0.0
+            
+        total_bias = 0.0
+        for adj in adjustments:
+            suggested = max(adj.suggested_qty, 1)
+            bias = (adj.actual_qty - adj.suggested_qty) / suggested
+            total_bias += bias
+            
+        avg_bias = total_bias / len(adjustments)
+        return max(-0.3, min(0.3, avg_bias))
+
+    @staticmethod
+    def compute_adaptive_alpha(sales_data: list) -> float:
+        """
+        Computes dynamic exponential alpha smoothing factor based on volatility.
+        High volatility -> high alpha (reacts faster)
+        """
+        if not sales_data or len(sales_data) < 2:
+            return 0.3
+            
+        mean = sum(sales_data) / len(sales_data)
+        if mean == 0:
+            return 0.2
+            
+        variance = sum((x - mean) ** 2 for x in sales_data) / len(sales_data)
+        std_dev = math.sqrt(variance)
+        
+        volatility = std_dev / max(mean, 1.0)
+        alpha = 0.2 + volatility
+        return max(0.2, min(0.8, alpha))
+
+class PriorityScorer:
+    @staticmethod
+    def compute_priority_score(demand_norm: float, profit_margin_norm: float, risk_norm: float) -> float:
+        """
+        Multi-factor score for global product prioritization.
+        All inputs should be normalized between 0 and 1.
+        """
+        # A simple multiplicative factor, you can adjust weightings if desired
+        return (demand_norm * 1.0) * (profit_margin_norm * 1.5) * (risk_norm * 2.0)
 
 class ProductProfiler:
     @staticmethod

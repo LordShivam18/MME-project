@@ -3,8 +3,8 @@ from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 import json
 from database import SessionLocal
-from models.core import Product, Inventory, Sale, ProductInsight, Notification
-from logic_engine import DemandPredictor, RiskAnalyzer, AnomalyDetector, ConfidenceScorer, ProductProfiler
+from models.core import Product, Inventory, Sale, ProductInsight, Notification, OrderAdjustment
+from logic_engine import DemandPredictor, RiskAnalyzer, AnomalyDetector, ConfidenceScorer, ProductProfiler, AdaptiveLearner, PriorityScorer
 
 logger = logging.getLogger(__name__)
 
@@ -44,8 +44,11 @@ def run_daily_ai_insights():
             else:
                 recent_avg = sum(sales_data_30d[-7:]) / 7.0
                 
+            # 0. Adaptive Smoothing (Alpha)
+            adaptive_alpha = AdaptiveLearner.compute_adaptive_alpha(sales_data_30d)
+            
             # 1. Demand Prediction
-            mean_demand, min_demand, max_demand = DemandPredictor.calculate_wma(sales_data_30d, window=14)
+            mean_demand, min_demand, max_demand = DemandPredictor.calculate_wma(sales_data_30d, window=14, alpha=adaptive_alpha)
             weekday_multipliers = DemandPredictor.get_weekday_multipliers()
             
             # 2. Risk Analysis
@@ -78,6 +81,26 @@ def run_daily_ai_insights():
             
             # 5. Product Profiler
             profile = ProductProfiler.classify_product(sales_data_30d, product.selling_price, product.cost_price)
+            
+            # 6. Adaptive Learning (Bias)
+            recent_adjustments = db.query(OrderAdjustment).filter(
+                OrderAdjustment.product_id == product.id,
+                OrderAdjustment.created_at >= cutoff_30d
+            ).all()
+            bias_factor = AdaptiveLearner.compute_bias_factor(recent_adjustments)
+            
+            # 7. Priority Scoring
+            # Normalize inputs (heuristics)
+            demand_norm = min(mean_demand / max(product.minimum_stock_level or 10.0, 10.0), 1.0)
+            profit_margin = 0.0
+            if product.selling_price and product.selling_price > 0:
+                profit_margin = (product.selling_price - (product.cost_price or 0)) / product.selling_price
+            profit_margin_norm = max(0.0, min(profit_margin, 1.0))
+            
+            risk_map = {"critical": 1.0, "high": 0.8, "medium": 0.5, "low": 0.2, "none": 0.1}
+            risk_norm = risk_map.get(stockout_risk, 0.1)
+            
+            priority_score = PriorityScorer.compute_priority_score(demand_norm, profit_margin_norm, risk_norm)
             
             
             # Construct insights text
@@ -138,8 +161,14 @@ def run_daily_ai_insights():
             insight_record.weekday_pattern = json.dumps(weekday_multipliers)
             insight_record.product_behavior_profile = profile
             insight_record.last_profile_updated_at = datetime.utcnow()
+            
+            # Adaptive AI Updates
+            insight_record.bias_factor = bias_factor
+            insight_record.adaptive_alpha = adaptive_alpha
+            insight_record.priority_score = priority_score
+            
             insight_record.generated_at = datetime.utcnow()
-            insight_record.model_version = "1.1.0"
+            insight_record.model_version = "1.2.0"
             
             db.commit()
             

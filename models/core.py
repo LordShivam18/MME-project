@@ -204,6 +204,12 @@ class ProductInsight(Base):
     weekday_pattern = Column(String, nullable=True)      # JSON string
     product_behavior_profile = Column(String, default="standard")
     last_profile_updated_at = Column(DateTime, nullable=True)
+    
+    # Adaptive AI Upgrades
+    bias_factor = Column(Float, default=0.0)
+    adaptive_alpha = Column(Float, default=0.3)
+    priority_score = Column(Float, default=0.0)
+    
     generated_at = Column(DateTime, default=datetime.utcnow)
     model_version = Column(String, default="1.0.0")
 

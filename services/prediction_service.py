@@ -31,6 +31,9 @@ def get_product_prediction(db: Session, shop_id: int, product_id: int, window_si
         multiplier = 0.85
         
     if insight_record:
+        # Apply bias factor to the multiplier
+        bias_factor = getattr(insight_record, 'bias_factor', 0.0) or 0.0
+        final_multiplier = multiplier * (1 + bias_factor)
         # 1. Live Context Stats
         inv = db.query(Inventory).filter(Inventory.product_id == product_id, Inventory.shop_id == shop_id).first()
         current_stock = inv.quantity_on_hand if inv else 0
@@ -146,7 +149,7 @@ def get_product_prediction(db: Session, shop_id: int, product_id: int, window_si
             "insight": insight_record.insight,
             "recommended_action": insight_record.recommended_action,
             "confidence_score": insight_record.confidence_score,
-            "predicted_daily_demand": insight_record.predicted_daily_demand * multiplier,
+            "predicted_daily_demand": insight_record.predicted_daily_demand * final_multiplier,
             "current_stock_quantity": current_stock,
             "avg_daily_sales": avg_daily,
             "last_order_quantity": last_order_qty,
@@ -154,8 +157,8 @@ def get_product_prediction(db: Session, shop_id: int, product_id: int, window_si
             "reorder_suggestion_source": "Historical Analytics + Core AI Engine",
             
             # AI Engine Upgrades
-            "demand_min": (getattr(insight_record, 'demand_min', 0.0) or 0.0) * multiplier,
-            "demand_max": (getattr(insight_record, 'demand_max', 0.0) or 0.0) * multiplier,
+            "demand_min": (getattr(insight_record, 'demand_min', 0.0) or 0.0) * final_multiplier,
+            "demand_max": (getattr(insight_record, 'demand_max', 0.0) or 0.0) * final_multiplier,
             "stockout_risk": getattr(insight_record, 'stockout_risk', "none") or "none",
             "overstock_risk": getattr(insight_record, 'overstock_risk', "none") or "none",
             "is_dead_stock": getattr(insight_record, 'is_dead_stock', False) or False,
@@ -163,6 +166,12 @@ def get_product_prediction(db: Session, shop_id: int, product_id: int, window_si
             "weekday_pattern": weekday_pattern,
             "product_behavior_profile": getattr(insight_record, 'product_behavior_profile', "standard") or "standard",
             "explanation_points": explanation_points,
+            
+            # Adaptive AI Upgrades
+            "bias_factor": bias_factor,
+            "adaptive_alpha": getattr(insight_record, 'adaptive_alpha', 0.3) or 0.3,
+            "priority_score": getattr(insight_record, 'priority_score', 0.0) or 0.0,
+            
             "raw_debug_data": debug_data,
             "generated_at": getattr(insight_record, 'generated_at', None),
             "model_version": getattr(insight_record, 'model_version', "1.0.0") or "1.0.0"
@@ -191,6 +200,12 @@ def get_product_prediction(db: Session, shop_id: int, product_id: int, window_si
         "weekday_pattern": {},
         "product_behavior_profile": "standard",
         "explanation_points": ["No AI insights available yet."],
+        
+        # Adaptive AI Upgrades
+        "bias_factor": 0.0,
+        "adaptive_alpha": 0.3,
+        "priority_score": 0.0,
+        
         "raw_debug_data": None,
         "generated_at": None,
         "model_version": "1.0.0"
