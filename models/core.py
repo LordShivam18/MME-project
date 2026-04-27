@@ -28,10 +28,12 @@ class User(Base):
     __tablename__ = "users"
     id = Column(Integer, primary_key=True, index=True)
     email = Column(String, unique=True, index=True, nullable=False)
+    username = Column(String, unique=True, index=True, nullable=True)
     hashed_password = Column(String, nullable=False)
     hashed_refresh_token = Column(String, nullable=True)
     organization_id = Column(Integer, ForeignKey("organizations.id"), index=True, nullable=True)
     role = Column(String, default="admin", nullable=False, server_default="admin")
+    is_platform_admin = Column(Boolean, default=False, nullable=False, server_default="false")
     token_version = Column(Integer, default=0, nullable=False, server_default="0")
     is_deleted = Column(Boolean, default=False, nullable=False, server_default="false")
     created_at = Column(DateTime, default=datetime.utcnow)

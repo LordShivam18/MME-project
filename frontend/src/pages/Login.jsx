@@ -27,6 +27,17 @@ export default function Login({ onLogin }) {
         localStorage.setItem("access_token", response.data.access_token);
         localStorage.setItem("refresh_token", response.data.refresh_token);
         
+        // Fetch user info to determine role routing
+        try {
+          const meRes = await axiosClient.get('/api/v1/me');
+          if (meRes.data && meRes.data.user && meRes.data.user.is_platform_admin) {
+            window.location.href = "/admin";
+            return;
+          }
+        } catch (e) {
+          console.error("Failed to fetch user profile", e);
+        }
+        
         // Check if first-time user by checking product count
         try {
           const prodsRes = await axiosClient.get('/api/v1/products/');
@@ -78,7 +89,7 @@ export default function Login({ onLogin }) {
         
         <form onSubmit={handleLogin} className="login-form">
           <div className="form-group">
-            <label htmlFor="email">Email address</label>
+            <label htmlFor="email">Email address or Username</label>
             <input 
               id="email"
               type="text" 

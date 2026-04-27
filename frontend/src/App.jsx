@@ -11,6 +11,7 @@ import Onboarding from './pages/Onboarding';
 import Contacts from './pages/Contacts';
 import ProfitDashboard from './pages/ProfitDashboard';
 import Settings from './pages/Settings';
+import AdminDashboard from './pages/AdminDashboard';
 
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -101,6 +102,12 @@ function App() {
         <Route path="/settings" element={
           <ProtectedRoute>
             <Settings />
+          </ProtectedRoute>
+        } />
+        
+        <Route path="/admin" element={
+          <ProtectedRoute>
+            <AdminDashboard />
           </ProtectedRoute>
         } />
         

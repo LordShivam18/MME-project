@@ -1,5 +1,5 @@
-from pydantic import BaseModel, Field
-from typing import Optional
+from pydantic import BaseModel, Field, EmailStr
+from typing import Optional, List, Dict, Any
 from datetime import datetime
 
 # --- Product Schemas ---
@@ -26,6 +26,24 @@ class ProductResponse(ProductBase):
         from_attributes = True
 
 # --- Sales Schemas ---
+class UserBase(BaseModel):
+    email: EmailStr
+    username: Optional[str] = None
+    role: str = "admin"
+
+class UserCreate(UserBase):
+    password: str
+    organization_name: str
+
+class UserResponse(UserBase):
+    id: int
+    organization_id: int
+    is_platform_admin: bool
+    created_at: datetime
+    
+    class Config:
+        from_attributes = True
+
 class SalesCreate(BaseModel):
     product_id: int
     quantity_sold: int

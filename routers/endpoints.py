@@ -216,7 +216,10 @@ def check_plan_limit(db: Session, org_id: int, resource: str):
 @limiter.limit("10/minute")
 def login(request: Request, background_tasks: BackgroundTasks, form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     logger.info("User lookup executed")
-    user = db.query(models.User).filter(models.User.email == form_data.username).first()
+    user = db.query(models.User).filter(
+        (models.User.email == form_data.username) | 
+        (models.User.username == form_data.username)
+    ).first()
     
     if not user:
         logger.info("User not found")
