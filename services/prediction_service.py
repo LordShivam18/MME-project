@@ -171,6 +171,9 @@ def get_product_prediction(db: Session, shop_id: int, product_id: int, window_si
             "bias_factor": bias_factor,
             "adaptive_alpha": getattr(insight_record, 'adaptive_alpha', 0.3) or 0.3,
             "priority_score": getattr(insight_record, 'priority_score', 0.0) or 0.0,
+            "priority_demand_norm": getattr(insight_record, 'priority_demand_norm', 0.0) or 0.0,
+            "priority_margin_norm": getattr(insight_record, 'priority_margin_norm', 0.0) or 0.0,
+            "priority_risk_norm": getattr(insight_record, 'priority_risk_norm', 0.0) or 0.0,
             
             "raw_debug_data": debug_data,
             "generated_at": getattr(insight_record, 'generated_at', None),
@@ -205,6 +208,9 @@ def get_product_prediction(db: Session, shop_id: int, product_id: int, window_si
         "bias_factor": 0.0,
         "adaptive_alpha": 0.3,
         "priority_score": 0.0,
+        "priority_demand_norm": 0.0,
+        "priority_margin_norm": 0.0,
+        "priority_risk_norm": 0.0,
         
         "raw_debug_data": None,
         "generated_at": None,

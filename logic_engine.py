@@ -236,13 +236,16 @@ class InventoryLogic:
 
 class AdaptiveLearner:
     @staticmethod
-    def compute_bias_factor(adjustments: list) -> float:
+    def compute_bias_factor(adjustments: list, previous_bias: float = 0.0) -> float:
         """
         Computes the bias factor based on historical user adjustments.
         Clamps the factor between -0.3 and 0.3.
+        Uses exponential smoothing and decay. Require at least 2 samples.
         """
-        if not adjustments:
-            return 0.0
+        if not adjustments or len(adjustments) < 2:
+            # Decay if no new adjustments (reduce absolute value by 5%)
+            decayed = previous_bias * 0.95
+            return decayed if abs(decayed) > 0.01 else 0.0
             
         total_bias = 0.0
         for adj in adjustments:
@@ -251,22 +254,39 @@ class AdaptiveLearner:
             total_bias += bias
             
         avg_bias = total_bias / len(adjustments)
-        return max(-0.3, min(0.3, avg_bias))
+        current_bias = max(-0.3, min(0.3, avg_bias))
+        
+        # Exponential smoothing (80% old, 20% new)
+        new_bias = (0.8 * previous_bias) + (0.2 * current_bias)
+        return max(-0.3, min(0.3, new_bias))
 
     @staticmethod
     def compute_adaptive_alpha(sales_data: list) -> float:
         """
         Computes dynamic exponential alpha smoothing factor based on volatility.
         High volatility -> high alpha (reacts faster)
+        Uses trimmed data (drop top/bottom 10%) and caps alpha for sparse data.
         """
-        if not sales_data or len(sales_data) < 2:
+        n = len(sales_data)
+        if n < 5:
+            return 0.3  # Cold start fallback
+            
+        if n < 7:
+            return 0.3  # Cap for sparse data
+            
+        # Trimmed mean/volatility (drop top 10% and bottom 10%)
+        trim_count = max(1, int(n * 0.1))
+        sorted_data = sorted(sales_data)
+        trimmed_data = sorted_data[trim_count:-trim_count] if trim_count * 2 < n else sorted_data
+        
+        if not trimmed_data:
             return 0.3
             
-        mean = sum(sales_data) / len(sales_data)
+        mean = sum(trimmed_data) / len(trimmed_data)
         if mean == 0:
             return 0.2
             
-        variance = sum((x - mean) ** 2 for x in sales_data) / len(sales_data)
+        variance = sum((x - mean) ** 2 for x in trimmed_data) / len(trimmed_data)
         std_dev = math.sqrt(variance)
         
         volatility = std_dev / max(mean, 1.0)

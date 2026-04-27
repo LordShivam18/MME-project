@@ -82,12 +82,16 @@ def run_daily_ai_insights():
             # 5. Product Profiler
             profile = ProductProfiler.classify_product(sales_data_30d, product.selling_price, product.cost_price)
             
+            # Fetch insight record early to get previous_bias
+            insight_record = db.query(ProductInsight).filter(ProductInsight.product_id == product.id).first()
+            previous_bias = insight_record.bias_factor if insight_record else 0.0
+            
             # 6. Adaptive Learning (Bias)
             recent_adjustments = db.query(OrderAdjustment).filter(
                 OrderAdjustment.product_id == product.id,
                 OrderAdjustment.created_at >= cutoff_30d
             ).all()
-            bias_factor = AdaptiveLearner.compute_bias_factor(recent_adjustments)
+            bias_factor = AdaptiveLearner.compute_bias_factor(recent_adjustments, previous_bias)
             
             # 7. Priority Scoring
             # Normalize inputs (heuristics)
@@ -139,7 +143,6 @@ def run_daily_ai_insights():
                     db.add(notif)
             
             # Upsert insight record
-            insight_record = db.query(ProductInsight).filter(ProductInsight.product_id == product.id).first()
             if not insight_record:
                 insight_record = ProductInsight(
                     product_id=product.id,
@@ -166,9 +169,12 @@ def run_daily_ai_insights():
             insight_record.bias_factor = bias_factor
             insight_record.adaptive_alpha = adaptive_alpha
             insight_record.priority_score = priority_score
+            insight_record.priority_demand_norm = demand_norm
+            insight_record.priority_margin_norm = profit_margin_norm
+            insight_record.priority_risk_norm = risk_norm
             
             insight_record.generated_at = datetime.utcnow()
-            insight_record.model_version = "1.2.0"
+            insight_record.model_version = "1.3.0"
             
             db.commit()
             

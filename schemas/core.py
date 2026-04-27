@@ -97,6 +97,9 @@ class PredictionResponse(BaseModel):
     bias_factor: float = 0.0
     adaptive_alpha: float = 0.3
     priority_score: float = 0.0
+    priority_demand_norm: float = 0.0
+    priority_margin_norm: float = 0.0
+    priority_risk_norm: float = 0.0
     
     raw_debug_data: Optional[Dict[str, Any]] = None
     generated_at: Optional[datetime] = None

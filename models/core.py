@@ -209,6 +209,9 @@ class ProductInsight(Base):
     bias_factor = Column(Float, default=0.0)
     adaptive_alpha = Column(Float, default=0.3)
     priority_score = Column(Float, default=0.0)
+    priority_demand_norm = Column(Float, default=0.0)
+    priority_margin_norm = Column(Float, default=0.0)
+    priority_risk_norm = Column(Float, default=0.0)
     
     generated_at = Column(DateTime, default=datetime.utcnow)
     model_version = Column(String, default="1.0.0")
