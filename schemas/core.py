@@ -82,6 +82,17 @@ class PredictionResponse(BaseModel):
     reorder_suggestion_source: str = "AI Logic Engine"
     recommended_suppliers: List[Dict[str, Any]] = []
 
+    # AI Engine Upgrades
+    demand_min: float = 0.0
+    demand_max: float = 0.0
+    stockout_risk: str = "none"
+    overstock_risk: str = "none"
+    is_dead_stock: bool = False
+    anomaly_flags: List[str] = []
+    weekday_pattern: Dict[str, float] = {}
+    generated_at: Optional[datetime] = None
+    model_version: str = "1.0.0"
+
     class Config:
         from_attributes = True
 

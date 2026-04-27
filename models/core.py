@@ -192,11 +192,37 @@ class ProductInsight(Base):
     recommended_action = Column(String, nullable=False)
     confidence_score = Column(Integer, nullable=False)
     predicted_daily_demand = Column(Float, nullable=False, default=0.0)
+    
+    # AI Engine Upgrades
+    demand_min = Column(Float, default=0.0)
+    demand_max = Column(Float, default=0.0)
+    stockout_risk = Column(String, default="none")       # none, low, medium, high, critical
+    overstock_risk = Column(String, default="none")      # none, low, medium, high
+    is_dead_stock = Column(Boolean, default=False)
+    anomaly_flags = Column(String, nullable=True)        # JSON string
+    weekday_pattern = Column(String, nullable=True)      # JSON string
+    generated_at = Column(DateTime, default=datetime.utcnow)
+    model_version = Column(String, default="1.0.0")
+
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     # Relationships
     product = relationship("Product")
     organization = relationship("Organization")
+
+class OrderAdjustment(Base):
+    __tablename__ = "order_adjustments"
+    id = Column(Integer, primary_key=True, index=True)
+    organization_id = Column(Integer, ForeignKey("organizations.id"), index=True, nullable=False)
+    product_id = Column(Integer, ForeignKey("products.id"), index=True, nullable=False)
+    suggested_qty = Column(Float, nullable=False)
+    actual_qty = Column(Float, nullable=False)
+    adjustment_reason = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    # Relationships
+    organization = relationship("Organization")
+    product = relationship("Product")
 
 # ============================================================
 # CONTACTS & ORDERS

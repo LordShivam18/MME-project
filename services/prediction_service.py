@@ -1,7 +1,8 @@
 import logging
+import json
 from sqlalchemy.orm import Session
 from models.core import Product, Inventory, Sale, ProductInsight, Contact, Order, OrderItem
-from schemas.core import PredictionResponse
+from logic_engine import SupplierScorer
 from sqlalchemy import func
 from datetime import datetime, timedelta
 
@@ -40,37 +41,42 @@ def get_product_prediction(db: Session, shop_id: int, product_id: int, window_si
         ).order_by(Order.created_at.desc()).first()
         last_order_qty = last_order.quantity if last_order else 0
 
-        # 2. Supplier Ranking Engine (70% freq / 30% recency)
-        orders_data = db.query(Contact.id, Contact.name, Order.created_at).\
-            join(Order, Order.contact_id == Contact.id).\
-            join(OrderItem, OrderItem.order_id == Order.id).\
-            filter(OrderItem.product_id == product_id, Contact.organization_id == shop_id, Contact.type == 'supplier').all()
-            
-        supplier_metrics = {}
-        for c_id, c_name, created_at in orders_data:
-            if c_id not in supplier_metrics:
-                supplier_metrics[c_id] = {"name": c_name, "freq": 0, "latest": created_at}
-            supplier_metrics[c_id]["freq"] += 1
-            if created_at > supplier_metrics[c_id]["latest"]:
-                supplier_metrics[c_id]["latest"] = created_at
+        # 2. Supplier Ranking Engine
+        # Get raw orders data for SupplierScorer
+        orders_data_raw = db.query(
+            Contact.id.label('contact_id'),
+            Contact.name.label('contact_name'),
+            Order.created_at,
+            Order.expected_delivery_date,
+            Order.status,
+            Product.lead_time_days
+        ).join(Order, Order.contact_id == Contact.id)\
+         .join(OrderItem, OrderItem.order_id == Order.id)\
+         .join(Product, Product.id == OrderItem.product_id)\
+         .filter(
+            OrderItem.product_id == product_id,
+            Contact.organization_id == shop_id,
+            Contact.type == 'supplier'
+         ).all()
+
+        formatted_orders_data = []
+        for r in orders_data_raw:
+            delivered_at = None
+            if r.status == 'delivered':
+                # proxy for delivered at
+                delivered_at = r.expected_delivery_date or r.created_at + timedelta(days=r.lead_time_days or 7)
                 
-        ranked_suppliers = []
-        if supplier_metrics:
-            max_freq = max(s["freq"] for s in supplier_metrics.values())
-            now = datetime.utcnow()
-            for c_id, data in supplier_metrics.items():
-                freq_score = (data["freq"] / max_freq) if max_freq > 0 else 0
-                days_ago = (now - data["latest"]).days
-                recency_score = max(0, (365 - days_ago) / 365.0)
-                final_score = (freq_score * 0.70) + (recency_score * 0.30)
-                
-                ranked_suppliers.append({
-                    "id": c_id,
-                    "name": data["name"],
-                    "score": final_score
-                })
-            ranked_suppliers.sort(key=lambda x: x["score"], reverse=True)
-        else:
+            formatted_orders_data.append({
+                'id': r.contact_id,
+                'name': r.contact_name,
+                'created_at': r.created_at,
+                'delivered_at': delivered_at,
+                'lead_time_days': r.lead_time_days or 7
+            })
+
+        ranked_suppliers = SupplierScorer.rank_suppliers(formatted_orders_data)
+        
+        if not ranked_suppliers:
             # Fallback to any active supplier
             general_suppliers = db.query(Contact).filter(
                 Contact.organization_id == shop_id, 
@@ -80,6 +86,17 @@ def get_product_prediction(db: Session, shop_id: int, product_id: int, window_si
             
             for s in general_suppliers:
                 ranked_suppliers.append({"id": s.id, "name": s.name, "score": 0.0})
+
+        # Process JSON fields
+        try:
+            anomaly_flags = json.loads(insight_record.anomaly_flags) if insight_record.anomaly_flags else []
+        except:
+            anomaly_flags = []
+            
+        try:
+            weekday_pattern = json.loads(insight_record.weekday_pattern) if insight_record.weekday_pattern else {}
+        except:
+            weekday_pattern = {}
 
         return {
             "product_id": insight_record.product_id,
@@ -91,7 +108,18 @@ def get_product_prediction(db: Session, shop_id: int, product_id: int, window_si
             "avg_daily_sales": avg_daily,
             "last_order_quantity": last_order_qty,
             "recommended_suppliers": ranked_suppliers,
-            "reorder_suggestion_source": "Historical Analytics + Core AI Engine"
+            "reorder_suggestion_source": "Historical Analytics + Core AI Engine",
+            
+            # AI Engine Upgrades
+            "demand_min": getattr(insight_record, 'demand_min', 0.0) or 0.0,
+            "demand_max": getattr(insight_record, 'demand_max', 0.0) or 0.0,
+            "stockout_risk": getattr(insight_record, 'stockout_risk', "none") or "none",
+            "overstock_risk": getattr(insight_record, 'overstock_risk', "none") or "none",
+            "is_dead_stock": getattr(insight_record, 'is_dead_stock', False) or False,
+            "anomaly_flags": anomaly_flags,
+            "weekday_pattern": weekday_pattern,
+            "generated_at": getattr(insight_record, 'generated_at', None),
+            "model_version": getattr(insight_record, 'model_version', "1.0.0") or "1.0.0"
         }
     
     # Fallback if cron hasn't run yet
@@ -105,5 +133,16 @@ def get_product_prediction(db: Session, shop_id: int, product_id: int, window_si
         "avg_daily_sales": 0.0,
         "last_order_quantity": 0,
         "recommended_suppliers": [],
-        "reorder_suggestion_source": "Pending initial scan"
+        "reorder_suggestion_source": "Pending initial scan",
+        
+        # AI Engine Upgrades
+        "demand_min": 0.0,
+        "demand_max": 0.0,
+        "stockout_risk": "none",
+        "overstock_risk": "none",
+        "is_dead_stock": False,
+        "anomaly_flags": [],
+        "weekday_pattern": {},
+        "generated_at": None,
+        "model_version": "1.0.0"
     }

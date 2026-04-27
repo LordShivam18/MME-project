@@ -224,6 +224,37 @@ def create_order(request: Request, payload: schemas.OrderCreate, db: Session = D
             price_at_time=line_price
         )
         db.add(order_item)
+        
+        # AI Engine Auto-Capture: Order Adjustment
+        insight = db.query(models.ProductInsight).filter(
+            models.ProductInsight.product_id == product.id,
+            models.ProductInsight.organization_id == org_id
+        ).first()
+        if insight:
+            from logic_engine import InventoryLogic
+            inv = db.query(models.Inventory).filter(
+                models.Inventory.product_id == product.id,
+                models.Inventory.shop_id == org_id
+            ).first()
+            if inv:
+                lead_time = product.lead_time_days or 7
+                suggested_qty = InventoryLogic.suggest_order_quantity(
+                    current_inventory=inv.quantity_on_hand,
+                    reorder_point=inv.reorder_point,
+                    predicted_daily_demand=insight.predicted_daily_demand,
+                    lead_time_days=lead_time
+                )
+                
+                # Only log if there was a non-zero suggestion
+                if suggested_qty > 0:
+                    adj = models.OrderAdjustment(
+                        organization_id=org_id,
+                        product_id=product.id,
+                        suggested_qty=suggested_qty,
+                        actual_qty=item.quantity,
+                        adjustment_reason="Auto-captured on order creation"
+                    )
+                    db.add(adj)
 
     new_order.total_amount = total_amount
     db.commit()
