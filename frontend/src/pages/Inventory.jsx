@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
 import axiosClient from '../api/axiosClient';
-import Navigation from '../components/Navigation';
 import PredictionWidget from '../components/PredictionWidget';
 import { LoadingSpinner, ErrorState, EmptyState } from '../components/StateSpinners';
 import { formatCurrency } from '../utils';
@@ -50,7 +49,6 @@ export default function Inventory() {
 
   return (
     <div style={{ fontFamily: 'sans-serif', maxWidth: '1200px', margin: '0 auto', padding: '1rem' }}>
-      <Navigation />
       
       <h2>Real-Time Inventory Status</h2>
       <p style={{ color: '#666' }}>Review active stock quantities and ping the ML Engine exclusively when required.</p>

@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import axiosClient from '../api/axiosClient';
-import Navigation from '../components/Navigation';
 import BillingStatus from '../components/BillingStatus';
 
 export default function Pricing() {
@@ -78,7 +77,6 @@ export default function Pricing() {
 
   return (
     <div style={styles.page}>
-      <Navigation />
       
       <div style={styles.content}>
         <div style={styles.header}>

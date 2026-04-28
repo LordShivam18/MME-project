@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import axiosClient from '../api/axiosClient';
-import Navigation from '../components/Navigation';
+
 import { LoadingSpinner, ErrorState } from '../components/StateSpinners';
 
 export default function ProductManager() {
@@ -184,7 +184,7 @@ export default function ProductManager() {
 
   return (
     <div style={{ fontFamily: 'sans-serif', maxWidth: '1200px', margin: '0 auto', padding: '1rem' }}>
-      <Navigation />
+
       
       <div style={{ display: 'flex', gap: '2rem' }}>
         {/* CREATE PRODUCT FORM */}

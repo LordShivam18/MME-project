@@ -12,6 +12,7 @@ import Contacts from './pages/Contacts';
 import ProfitDashboard from './pages/ProfitDashboard';
 import Settings from './pages/Settings';
 import AdminDashboard from './pages/AdminDashboard';
+import Layout from './components/Layout';
 
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -51,46 +52,51 @@ function App() {
     return isAuthenticated ? children : <Navigate to="/login" replace />;
   };
 
+  // Layout-wrapped protected route
+  const ProtectedWithLayout = ({ children }) => {
+    return isAuthenticated ? <Layout>{children}</Layout> : <Navigate to="/login" replace />;
+  };
+
   return (
     <Router>
       <Routes>
         <Route path="/login" element={<Login onLogin={() => setIsAuthenticated(true)} />} />
         
-        {/* Explicit Routing boundaries */}
+        {/* Routes with sidebar layout */}
         <Route path="/dashboard" element={
-          <ProtectedRoute>
+          <ProtectedWithLayout>
             <Dashboard />
-          </ProtectedRoute>
+          </ProtectedWithLayout>
         } />
         
         <Route path="/products" element={
-          <ProtectedRoute>
+          <ProtectedWithLayout>
             <ProductManager />
-          </ProtectedRoute>
+          </ProtectedWithLayout>
         } />
         
         <Route path="/contacts" element={
-          <ProtectedRoute>
+          <ProtectedWithLayout>
             <Contacts />
-          </ProtectedRoute>
+          </ProtectedWithLayout>
         } />
 
         <Route path="/inventory" element={
-          <ProtectedRoute>
+          <ProtectedWithLayout>
             <Inventory />
-          </ProtectedRoute>
+          </ProtectedWithLayout>
         } />
 
         <Route path="/profit" element={
-          <ProtectedRoute>
+          <ProtectedWithLayout>
             <ProfitDashboard />
-          </ProtectedRoute>
+          </ProtectedWithLayout>
         } />
 
         <Route path="/billing" element={
-          <ProtectedRoute>
+          <ProtectedWithLayout>
             <Pricing />
-          </ProtectedRoute>
+          </ProtectedWithLayout>
         } />
 
         <Route path="/onboarding" element={
@@ -100,9 +106,9 @@ function App() {
         } />
         
         <Route path="/settings" element={
-          <ProtectedRoute>
+          <ProtectedWithLayout>
             <Settings />
-          </ProtectedRoute>
+          </ProtectedWithLayout>
         } />
         
         <Route path="/admin" element={

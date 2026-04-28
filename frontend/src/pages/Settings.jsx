@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import axiosClient from '../api/axiosClient';
-import Navigation from '../components/Navigation';
 import { LoadingSpinner, ErrorState } from '../components/StateSpinners';
 
 export default function Settings() {
@@ -48,7 +47,6 @@ export default function Settings() {
   if (isLoading) {
     return (
       <div style={{ padding: '2rem' }}>
-        <Navigation />
         <LoadingSpinner />
       </div>
     );
@@ -56,7 +54,6 @@ export default function Settings() {
 
   return (
     <div style={{ fontFamily: '"Inter", sans-serif', maxWidth: '1200px', margin: '0 auto', padding: '1rem' }}>
-      <Navigation />
       
       <div style={{ padding: '2rem', marginTop: '2rem', backgroundColor: '#f8fafc', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
         <h2 style={{ margin: '0 0 1.5rem 0', color: '#0f172a' }}>Organization Settings</h2>

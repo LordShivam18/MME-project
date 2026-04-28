@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useLocation, useSearchParams } from 'react-router-dom';
 import axiosClient from '../api/axiosClient';
-import Navigation from '../components/Navigation';
+import { formatCurrency } from '../utils';
 
 export default function Contacts() {
   const location = useLocation();
@@ -186,13 +186,12 @@ export default function Contacts() {
 
   return (
     <div style={{ fontFamily: 'sans-serif', maxWidth: '1400px', margin: '0 auto', padding: '1rem', height: '100vh', display: 'flex', flexDirection: 'column' }}>
-      <Navigation />
       
       {/* Global Orders Dashboard */}
       <div style={{ display: 'flex', gap: '2rem', marginBottom: '2rem', padding: '1rem', background: '#f8fafc', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
         <div style={{ flex: 1 }}>
           <div style={{ fontSize: '0.85rem', color: '#64748b', fontWeight: 'bold' }}>TOTAL SPEND/REVENUE</div>
-          <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#0f172a' }}>${totalValue.toFixed(2)}</div>
+          <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#0f172a' }}>{formatCurrency(totalValue)}</div>
         </div>
         <div style={{ flex: 1, borderLeft: '1px solid #e2e8f0', paddingLeft: '2rem' }}>
           <div style={{ fontSize: '0.85rem', color: '#64748b', fontWeight: 'bold' }}>PENDING ORDERS</div>
@@ -302,7 +301,7 @@ export default function Contacts() {
                       <label style={styles.label}>Product</label>
                       <select style={styles.input} value={selectedProduct} onChange={(e) => setSelectedProduct(e.target.value)}>
                         <option value="">-- Select Product --</option>
-                        {products.map(p => <option key={p.id} value={p.id}>{p.name} (${p.selling_price})</option>)}
+                        {products.map(p => <option key={p.id} value={p.id}>{p.name} ({formatCurrency(p.selling_price)})</option>)}
                       </select>
                     </div>
                     <div style={{ width: '100px' }}>
@@ -338,14 +337,14 @@ export default function Contacts() {
                                   style={{ width: '60px', padding: '0.2rem' }}
                                 />
                               </td>
-                              <td style={styles.td}>${item.product.selling_price}</td>
-                              <td style={styles.td}>${(item.product.selling_price * item.quantity).toFixed(2)}</td>
+                              <td style={styles.td}>{formatCurrency(item.product.selling_price)}</td>
+                              <td style={styles.td}>{formatCurrency(item.product.selling_price * item.quantity)}</td>
                             </tr>
                           ))}
                         </tbody>
                       </table>
                       <div style={{ padding: '1rem', background: '#f9fafb', textAlign: 'right', fontSize: '1.2rem' }}>
-                        <strong>Grand Total: ${cartTotal.toFixed(2)}</strong>
+                        <strong>Grand Total: {formatCurrency(cartTotal)}</strong>
                       </div>
                       <div style={{ padding: '1rem', display: 'flex', justifyContent: 'flex-end', gap: '1rem' }}>
                         <button onClick={() => setIsCreatingOrder(false)} style={styles.btnSecondary}>Cancel</button>
@@ -381,7 +380,7 @@ export default function Contacts() {
                           </div>
                         </div>
                         <div style={{ background: '#f9fafb', padding: '0.5rem 1rem', borderRadius: '4px', fontSize: '0.9rem' }}>
-                          {order.items?.length || 0} items — <strong>Total: ${Number(order.total_amount).toFixed(2)}</strong>
+                          {order.items?.length || 0} items — <strong>Total: {formatCurrency(order.total_amount)}</strong>
                         </div>
                       </div>
                     ))

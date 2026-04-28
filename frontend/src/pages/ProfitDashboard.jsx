@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axiosClient from '../api/axiosClient';
-import Navigation from '../components/Navigation';
+import { formatCurrency } from '../utils';
 import { LoadingSpinner, ErrorState } from '../components/StateSpinners';
 import {
   Chart as ChartJS, CategoryScale, LinearScale, PointElement,
@@ -120,7 +120,6 @@ export default function ProfitDashboard() {
   if (isLoading) {
     return (
       <div style={{ padding: '2rem' }}>
-        <Navigation />
         <LoadingSpinner />
       </div>
     );
@@ -129,7 +128,6 @@ export default function ProfitDashboard() {
   if (error) {
     return (
       <div style={{ padding: '2rem' }}>
-        <Navigation />
         <ErrorState message={error} />
       </div>
     );
@@ -139,7 +137,6 @@ export default function ProfitDashboard() {
   if (products.length === 0) {
     return (
       <div style={{ padding: '2rem', fontFamily: '"Inter", sans-serif', maxWidth: '1400px', margin: '0 auto' }}>
-        <Navigation />
         <div style={{ textAlign: 'center', padding: '5rem 0', color: '#64748b' }}>
           <h2>No Products Available</h2>
           <p>Add products to your catalog to unlock Profit AI Insights.</p>
@@ -198,8 +195,6 @@ export default function ProfitDashboard() {
         .split-row { display: flex; gap: 2rem; flex-wrap: wrap; margin-bottom: 2rem; }
         .half-col { flex: 1; min-width: 300px; display: flex; flexDirection: column; gap: 1rem; }
       `}</style>
-      
-      <Navigation />
 
       <div style={{ padding: '0 1rem' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: '2.5rem' }}>
@@ -241,7 +236,7 @@ export default function ProfitDashboard() {
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '1.5rem', marginBottom: '3rem' }}>
           <div className="glass-card" style={{ padding: '1.5rem' }}>
             <h3 style={{ color: '#64748b', fontSize: '0.9rem', margin: 0, fontWeight: 600, textTransform: 'uppercase' }}>Est. Volume (7-Day UTC)</h3>
-            <div className="metric-value">${total7DayProfit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+            <div className="metric-value">{formatCurrency(total7DayProfit)}</div>
             <div className={`growth-badge ${isPositiveGrowth ? 'positive' : 'negative'}`}>
               {isPositiveGrowth ? '↑' : '↓'} {Math.abs(growthPercent)}% vs prior period
             </div>
@@ -270,7 +265,7 @@ export default function ProfitDashboard() {
                       <td style={{ padding: '0.8rem 0', fontWeight: 600, color: '#334155' }}>
                         <span style={{cursor: 'pointer'}} onClick={() => handleProductClick(p)}>{p.name} ↗</span>
                       </td>
-                      <td style={{ padding: '0.8rem 0', color: '#10b981', fontWeight: 700 }}>${p.profit_per_unit.toFixed(2)} / unit</td>
+                      <td style={{ padding: '0.8rem 0', color: '#10b981', fontWeight: 700 }}>{formatCurrency(p.profit_per_unit)} / unit</td>
                       <td style={{ padding: '0.8rem 0', textAlign: 'right' }}>
                         <button className="btn-action btn-primary" onClick={() => navigate('/contacts')}>View Suppliers</button>
                       </td>
@@ -292,7 +287,7 @@ export default function ProfitDashboard() {
                       <td style={{ padding: '0.8rem 0', fontWeight: 600, color: '#334155' }}>
                         <span style={{cursor: 'pointer'}} onClick={() => handleProductClick(p)}>{p.name} ↗</span>
                       </td>
-                      <td style={{ padding: '0.8rem 0', color: '#ef4444', fontWeight: 700 }}>${p.profit_per_unit.toFixed(2)} / unit</td>
+                      <td style={{ padding: '0.8rem 0', color: '#ef4444', fontWeight: 700 }}>{formatCurrency(p.profit_per_unit)} / unit</td>
                       <td style={{ padding: '0.8rem 0', textAlign: 'right', display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
                         <button className="btn-action btn-warning" onClick={() => navigate('/products')}>Review Price</button>
                       </td>
@@ -350,7 +345,7 @@ export default function ProfitDashboard() {
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '2rem' }}>
               <div style={{ background: '#f8fafc', padding: '1.5rem', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
                 <div style={{ color: '#64748b', fontSize: '0.875rem', marginBottom: '0.5rem' }}>Profit Per Unit</div>
-                <div style={{ fontSize: '2rem', fontWeight: 700, color: '#10b981' }}>${selectedProduct.profit_per_unit.toFixed(2)}</div>
+                <div style={{ fontSize: '2rem', fontWeight: 700, color: '#10b981' }}>{formatCurrency(selectedProduct.profit_per_unit)}</div>
                 <div style={{ fontSize: '0.875rem', color: '#94a3b8', marginTop: '0.25rem' }}>Margin vs Cost Baseline</div>
               </div>
               <div style={{ background: '#f8fafc', padding: '1.5rem', borderRadius: '12px', border: '1px solid #e2e8f0' }}>

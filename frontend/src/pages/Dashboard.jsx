@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import axiosClient from '../api/axiosClient';
-import Navigation from '../components/Navigation';
+
 import { LoadingSpinner, ErrorState } from '../components/StateSpinners';
 
 export default function Dashboard() {
@@ -26,7 +26,7 @@ export default function Dashboard() {
 
   return (
     <div style={{ fontFamily: 'sans-serif', maxWidth: '1200px', margin: '0 auto', padding: '1rem' }}>
-      <Navigation />
+
       
       <div style={{ border: '2px dashed #ccc', padding: '3rem', borderRadius: '8px', textAlign: 'center', marginTop: '2rem', backgroundColor: '#f9f9f9' }}>
         <h2>System Dashboard</h2>
