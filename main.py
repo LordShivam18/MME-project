@@ -78,6 +78,29 @@ async def lifespan(app: FastAPI):
                 )
             """))
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_stripe_events_event_id ON stripe_events (event_id)"))
+            # --- Chat tables ---
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS conversations (
+                    id SERIAL PRIMARY KEY,
+                    organization_id INTEGER NOT NULL REFERENCES organizations(id),
+                    contact_id INTEGER REFERENCES contacts(id),
+                    created_at TIMESTAMP DEFAULT NOW(),
+                    last_message_at TIMESTAMP DEFAULT NOW(),
+                    is_deleted BOOLEAN DEFAULT FALSE
+                )
+            """))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_convos_org_last ON conversations (organization_id, last_message_at DESC)"))
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS messages (
+                    id SERIAL PRIMARY KEY,
+                    conversation_id INTEGER NOT NULL REFERENCES conversations(id),
+                    sender_user_id INTEGER NOT NULL REFERENCES users(id),
+                    content VARCHAR(2048) NOT NULL,
+                    is_read BOOLEAN DEFAULT FALSE,
+                    created_at TIMESTAMP DEFAULT NOW()
+                )
+            """))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_msgs_convo_created ON messages (conversation_id, created_at DESC)"))
             conn.commit()
         logger.info("Migration check complete: all columns, indexes, and tables ensured")
     except Exception as e:
@@ -249,6 +272,9 @@ app.include_router(endpoints.router, prefix="/api/v1")
 
 from routers import orders
 app.include_router(orders.router, prefix="/api/v1")
+
+from routers import chat
+app.include_router(chat.router, prefix="/api/v1")
 
 # ---------------- HEALTH CHECK ----------------
 @app.get("/health")

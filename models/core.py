@@ -186,6 +186,33 @@ class Notification(Base):
     # Relationships
     organization = relationship("Organization")
 
+class Conversation(Base):
+    __tablename__ = "conversations"
+    id = Column(Integer, primary_key=True, index=True)
+    organization_id = Column(Integer, ForeignKey("organizations.id"), index=True, nullable=False)
+    contact_id = Column(Integer, ForeignKey("contacts.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    last_message_at = Column(DateTime, default=datetime.utcnow)
+    is_deleted = Column(Boolean, default=False)
+
+    # Relationships
+    organization = relationship("Organization")
+    contact = relationship("Contact")
+    messages = relationship("Message", back_populates="conversation", order_by="Message.created_at")
+
+class Message(Base):
+    __tablename__ = "messages"
+    id = Column(Integer, primary_key=True, index=True)
+    conversation_id = Column(Integer, ForeignKey("conversations.id"), index=True, nullable=False)
+    sender_user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    content = Column(String(2048), nullable=False)
+    is_read = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    # Relationships
+    conversation = relationship("Conversation", back_populates="messages")
+    sender = relationship("User")
+
 class ProductInsight(Base):
     __tablename__ = "product_insights"
     id = Column(Integer, primary_key=True, index=True)

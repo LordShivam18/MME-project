@@ -12,6 +12,7 @@ import Contacts from './pages/Contacts';
 import ProfitDashboard from './pages/ProfitDashboard';
 import Settings from './pages/Settings';
 import AdminDashboard from './pages/AdminDashboard';
+import Chat from './pages/Chat';
 import Layout from './components/Layout';
 
 function App() {
@@ -96,6 +97,12 @@ function App() {
         <Route path="/billing" element={
           <ProtectedWithLayout>
             <Pricing />
+          </ProtectedWithLayout>
+        } />
+
+        <Route path="/chat" element={
+          <ProtectedWithLayout>
+            <Chat />
           </ProtectedWithLayout>
         } />
 
