@@ -213,6 +213,16 @@ class Message(Base):
     conversation = relationship("Conversation", back_populates="messages")
     sender = relationship("User")
 
+class OTPCode(Base):
+    __tablename__ = "otp_codes"
+    id = Column(Integer, primary_key=True, index=True)
+    email = Column(String, index=True, nullable=False)
+    hashed_otp = Column(String, nullable=False)
+    purpose = Column(String, nullable=False)  # signup, forgot_password
+    expires_at = Column(DateTime, nullable=False)
+    attempts = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
 class ProductInsight(Base):
     __tablename__ = "product_insights"
     id = Column(Integer, primary_key=True, index=True)

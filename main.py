@@ -101,6 +101,19 @@ async def lifespan(app: FastAPI):
                 )
             """))
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_msgs_convo_created ON messages (conversation_id, created_at DESC)"))
+            # --- OTP table ---
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS otp_codes (
+                    id SERIAL PRIMARY KEY,
+                    email VARCHAR NOT NULL,
+                    hashed_otp VARCHAR NOT NULL,
+                    purpose VARCHAR NOT NULL,
+                    expires_at TIMESTAMP NOT NULL,
+                    attempts INTEGER DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT NOW()
+                )
+            """))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_otp_email ON otp_codes (email)"))
             conn.commit()
         logger.info("Migration check complete: all columns, indexes, and tables ensured")
     except Exception as e:
@@ -275,6 +288,9 @@ app.include_router(orders.router, prefix="/api/v1")
 
 from routers import chat
 app.include_router(chat.router, prefix="/api/v1")
+
+from routers import auth_routes
+app.include_router(auth_routes.router, prefix="/api/v1")
 
 # ---------------- HEALTH CHECK ----------------
 @app.get("/health")
