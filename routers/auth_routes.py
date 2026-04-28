@@ -10,7 +10,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, Field
 
 from database import get_db
 from models import core as models
@@ -32,19 +32,19 @@ GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
 
 # --- Schemas ---
 class SignupInitiate(BaseModel):
-    email: EmailStr
+    email: str
     password: str = Field(..., min_length=8)
 
 class OTPVerify(BaseModel):
-    email: EmailStr
+    email: str
     otp: str = Field(..., min_length=6, max_length=6)
     password: str = Field(..., min_length=8)
 
 class ForgotInitiate(BaseModel):
-    email: EmailStr
+    email: str
 
 class ForgotVerify(BaseModel):
-    email: EmailStr
+    email: str
     otp: str = Field(..., min_length=6, max_length=6)
     new_password: str = Field(..., min_length=8)
 
