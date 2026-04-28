@@ -219,10 +219,15 @@ export default function Login({ onLogin }) {
               <div style={{ flex: 1, height: '1px', background: '#e2e8f0' }}></div>
             </div>
 
-            <button type="button" onClick={handleGoogleLogin} style={{
+            <button type="button" onClick={handleGoogleLogin} 
+              disabled={!import.meta.env.VITE_GOOGLE_CLIENT_ID}
+              title={!import.meta.env.VITE_GOOGLE_CLIENT_ID ? 'Google login not configured' : ''}
+              style={{
               width: '100%', padding: '0.7rem', border: '1px solid #d1d5db', borderRadius: '8px',
-              background: '#fff', cursor: 'pointer', fontSize: '0.9rem', fontWeight: 600,
-              color: '#374151', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem'
+              background: '#fff', cursor: import.meta.env.VITE_GOOGLE_CLIENT_ID ? 'pointer' : 'not-allowed', 
+              fontSize: '0.9rem', fontWeight: 600,
+              color: '#374151', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem',
+              opacity: import.meta.env.VITE_GOOGLE_CLIENT_ID ? 1 : 0.5
             }}>
               <svg width="18" height="18" viewBox="0 0 48 48"><path fill="#FFC107" d="M43.6 20H24v8h11.3C34 33.3 29.5 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3 0 5.7 1.1 7.8 2.9l5.7-5.7C33.9 5.5 29.2 4 24 4 13 4 4 13 4 24s9 20 20 20 20-9 20-20c0-1.3-.1-2.7-.4-4z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.3 16.1 18.8 13 24 13c3 0 5.7 1.1 7.8 2.9l5.7-5.7C33.9 5.5 29.2 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-1.8 13.4-4.7l-6.2-5.2C29.3 35.9 26.8 37 24 37c-5.5 0-10.1-3.7-11.7-8.7l-6.5 5C9.5 39.5 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20H24v8h11.3c-.8 2.5-2.4 4.6-4.5 6.1l6.2 5.2C40.3 36.3 44 30.7 44 24c0-1.3-.1-2.7-.4-4z"/></svg>
               Continue with Google

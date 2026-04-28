@@ -106,7 +106,7 @@ export default function Pricing() {
             {currentPlan === 'free' && <div style={styles.currentBadge}>Current Plan</div>}
             <h2 style={styles.cardTitle}>Free Starter</h2>
             <div style={styles.price}>
-              <span style={styles.currency}>$</span>0<span style={styles.period}>/month</span>
+              <span style={styles.currency}>₹</span>0<span style={styles.period}>/month</span>
             </div>
             <ul style={styles.featuresList}>
               <li style={styles.featureItem}>✓ Up to 10 Products</li>
@@ -141,7 +141,7 @@ export default function Pricing() {
             {currentPlan !== 'pro' && <div style={{ ...styles.currentBadge, backgroundColor: '#f59e0b' }}>⭐ Most Popular</div>}
             <h2 style={styles.cardTitle}>Pro Business</h2>
             <div style={{...styles.price, marginBottom: '0.5rem'}}>
-              <span style={styles.currency}>$</span>49<span style={styles.period}>/month</span>
+              <span style={styles.currency}>₹</span>1,999<span style={styles.period}>/month</span>
             </div>
             <div style={{textAlign: 'center', marginBottom: '2rem', fontSize: '0.85rem', color: '#10b981', fontWeight: '600'}}>
               Pays for itself with ~1 optimized reorder

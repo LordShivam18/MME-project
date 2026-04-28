@@ -715,7 +715,19 @@ def get_prediction_insights(request: Request, product_id: int, window_size_days:
         return result
     except Exception as e:
         logger.error("PREDICTION ERROR: %s", str(e))
-        raise HTTPException(status_code=500, detail=str(e))
+        # Safe fallback instead of crashing
+        return {
+            "product_id": product_id,
+            "predicted_daily_demand": 0,
+            "demand_min": 0,
+            "demand_max": 0,
+            "confidence_score": 0,
+            "stockout_risk": 0,
+            "overstock_risk": 0,
+            "insight": "Not enough data yet. Add more sales to get AI predictions.",
+            "recommended_action": "Record sales data to enable AI predictions.",
+            "is_fallback": True
+        }
 
 @router.get("/ai/performance", response_model=schemas.AIPerformanceResponse)
 def get_ai_performance(request: Request, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):

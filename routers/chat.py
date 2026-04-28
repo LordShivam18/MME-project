@@ -93,33 +93,45 @@ def get_conversations(db: Session = Depends(get_db), current_user: dict = Depend
 def create_or_get_conversation(payload: ConversationCreate, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     org_id = _org_id(current_user)
     
-    # Verify contact belongs to this org
-    contact = db.query(models.Contact).filter(
-        models.Contact.id == payload.contact_id,
-        models.Contact.organization_id == org_id
-    ).first()
-    if not contact:
-        raise HTTPException(status_code=404, detail="Contact not found")
+    if not payload.contact_id:
+        raise HTTPException(status_code=400, detail="contact_id is required")
     
-    # Idempotent: return existing conversation if one exists
-    existing = db.query(models.Conversation).filter(
-        models.Conversation.organization_id == org_id,
-        models.Conversation.contact_id == payload.contact_id,
-        models.Conversation.is_deleted == False
-    ).first()
-    
-    if existing:
-        return {"id": existing.id, "contact_name": contact.name, "created": False}
-    
-    convo = models.Conversation(
-        organization_id=org_id,
-        contact_id=payload.contact_id,
-        last_message_at=datetime.utcnow()
-    )
-    db.add(convo)
-    db.commit()
-    db.refresh(convo)
-    return {"id": convo.id, "contact_name": contact.name, "created": True}
+    try:
+        # Verify contact belongs to this org
+        contact = db.query(models.Contact).filter(
+            models.Contact.id == payload.contact_id,
+            models.Contact.organization_id == org_id
+        ).first()
+        if not contact:
+            logger.warning(f"Chat: contact {payload.contact_id} not found for org {org_id}")
+            raise HTTPException(status_code=404, detail="Contact not found in your organization")
+        
+        # Idempotent: return existing conversation if one exists
+        existing = db.query(models.Conversation).filter(
+            models.Conversation.organization_id == org_id,
+            models.Conversation.contact_id == payload.contact_id,
+            models.Conversation.is_deleted == False
+        ).first()
+        
+        if existing:
+            logger.info(f"Chat: returning existing conversation {existing.id} for contact {contact.name}")
+            return {"id": existing.id, "contact_name": contact.name, "created": False}
+        
+        convo = models.Conversation(
+            organization_id=org_id,
+            contact_id=payload.contact_id,
+            last_message_at=datetime.utcnow()
+        )
+        db.add(convo)
+        db.commit()
+        db.refresh(convo)
+        logger.info(f"Chat: created conversation {convo.id} for contact {contact.name}")
+        return {"id": convo.id, "contact_name": contact.name, "created": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Chat: failed to create conversation: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to create conversation")
 
 
 # ============================================================

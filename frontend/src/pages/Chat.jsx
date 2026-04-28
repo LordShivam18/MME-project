@@ -19,6 +19,7 @@ export default function Chat() {
   const [contacts, setContacts] = useState([]);
   const [showNewChat, setShowNewChat] = useState(false);
   const [currentUserId, setCurrentUserId] = useState(null);
+  const [error, setError] = useState('');
   const messagesEndRef = useRef(null);
   const isTabFocused = useRef(true);
 
@@ -103,7 +104,8 @@ export default function Chat() {
       fetchMessages();
       fetchConversations();
     } catch (e) {
-      alert('Failed to send message');
+      setError(e.response?.data?.detail || 'Failed to send message');
+      setTimeout(() => setError(''), 3000);
     }
   };
 
@@ -122,12 +124,19 @@ export default function Chat() {
       // Set active
       setActiveConvo({ id: res.data.id, contact_name: res.data.contact_name });
     } catch (e) {
-      alert('Failed to start conversation');
+      setError(e.response?.data?.detail || 'Failed to start conversation');
+      setTimeout(() => setError(''), 3000);
     }
   };
 
   return (
-    <div style={{ display: 'flex', height: 'calc(100vh - 120px)', fontFamily: 'sans-serif', gap: 0 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 120px)', fontFamily: 'sans-serif' }}>
+      {error && (
+        <div style={{ padding: '0.6rem 1rem', background: '#fef2f2', border: '1px solid #fecaca', color: '#991b1b', fontSize: '0.85rem', borderRadius: '6px', margin: '0 0 0.5rem 0' }}>
+          ⚠️ {error}
+        </div>
+      )}
+      <div style={{ display: 'flex', flex: 1, gap: 0, overflow: 'hidden' }}>
       {/* Left: Conversation List */}
       <div style={{ width: '300px', minWidth: '300px', borderRight: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', background: '#fff' }}>
         <div style={{ padding: '1rem', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -250,6 +259,7 @@ export default function Chat() {
             </div>
           </>
         )}
+      </div>
       </div>
     </div>
   );

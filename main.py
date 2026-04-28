@@ -114,6 +114,35 @@ async def lifespan(app: FastAPI):
                 )
             """))
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_otp_email ON otp_codes (email)"))
+            # --- product_insights AI columns (idempotent) ---
+            pi_columns = [
+                ("demand_min", "FLOAT DEFAULT 0"),
+                ("demand_max", "FLOAT DEFAULT 0"),
+                ("stockout_risk", "FLOAT DEFAULT 0"),
+                ("overstock_risk", "FLOAT DEFAULT 0"),
+                ("is_dead_stock", "BOOLEAN DEFAULT FALSE"),
+                ("anomaly_flags", "VARCHAR DEFAULT ''"),
+                ("weekday_pattern", "TEXT"),
+                ("product_behavior_profile", "TEXT"),
+                ("last_profile_updated_at", "TIMESTAMP"),
+                ("bias_factor", "FLOAT DEFAULT 0"),
+                ("adaptive_alpha", "FLOAT DEFAULT 0.3"),
+                ("priority_score", "FLOAT DEFAULT 0"),
+                ("priority_demand_norm", "FLOAT DEFAULT 0"),
+                ("priority_margin_norm", "FLOAT DEFAULT 0"),
+                ("priority_risk_norm", "FLOAT DEFAULT 0"),
+                ("explanation_points", "TEXT"),
+                ("generated_at", "TIMESTAMP"),
+                ("model_version", "VARCHAR DEFAULT '1.0.0'"),
+            ]
+            for col_name, col_type in pi_columns:
+                try:
+                    conn.execute(text(f"ALTER TABLE product_insights ADD COLUMN IF NOT EXISTS {col_name} {col_type}"))
+                except Exception:
+                    pass  # Column may already exist
+            # --- Performance indexes ---
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_pi_product_org ON product_insights (product_id, organization_id)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_convos_org_contact ON conversations (organization_id, contact_id)"))
             conn.commit()
         logger.info("Migration check complete: all columns, indexes, and tables ensured")
     except Exception as e:
