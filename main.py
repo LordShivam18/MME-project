@@ -208,6 +208,31 @@ async def lifespan(app: FastAPI):
                 logger.info("Assigned user to default org: id=%s", default_org.id)
             db.commit()
 
+        # Ensure admin fallback user exists (idempotent)
+        admin = db.query(User).filter(User.email == "admin@test.com").first()
+        if not admin:
+            admin = User(
+                email="admin@test.com",
+                username="admin",
+                hashed_password=pwd_context.hash("admin123"),
+                organization_id=default_org.id,
+                role="admin",
+                is_platform_admin=True
+            )
+            db.add(admin)
+            db.commit()
+            db.refresh(admin)
+            logger.info("✅ Admin user created: %s (org_id=%s)", admin.email, admin.organization_id)
+        else:
+            # Ensure password is correct and admin flags are set
+            admin.hashed_password = pwd_context.hash("admin123")
+            admin.is_platform_admin = True
+            admin.role = "admin"
+            if not admin.organization_id:
+                admin.organization_id = default_org.id
+            db.commit()
+            logger.info("⚠️ Admin user already exists: %s (org_id=%s)", admin.email, admin.organization_id)
+
         # Migrate existing data: update shop_id references for existing products/inventory/sales
         # that may reference user.id instead of organization.id
         from models.core import Product, Inventory, Sale

@@ -215,53 +215,64 @@ def check_plan_limit(db: Session, org_id: int, resource: str):
 @router.post("/login")
 @limiter.limit("10/minute")
 def login(request: Request, background_tasks: BackgroundTasks, form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
-    logger.info("User lookup executed")
-    user = db.query(models.User).filter(
-        (models.User.email == form_data.username) | 
-        (models.User.username == form_data.username)
-    ).first()
-    
-    if not user:
-        logger.info("User not found")
-        raise HTTPException(status_code=401, detail="Incorrect credentials")
+    try:
+        logger.info("LOGIN_ATTEMPT: email=%s", form_data.username)
+        user = db.query(models.User).filter(
+            (models.User.email == form_data.username) | 
+            (models.User.username == form_data.username)
+        ).first()
+        
+        if not user:
+            logger.warning("USER_FOUND: False (email=%s)", form_data.username)
+            raise HTTPException(status_code=401, detail="Incorrect credentials")
 
-    if getattr(user, 'is_deleted', False):
-        logger.info("User account deactivated")
-        raise HTTPException(status_code=401, detail="Account has been deactivated")
+        logger.info("USER_FOUND: True (id=%s, org=%s)", user.id, user.organization_id)
+
+        if getattr(user, 'is_deleted', False):
+            logger.warning("USER_DELETED: True (id=%s)", user.id)
+            raise HTTPException(status_code=401, detail="Account has been deactivated")
         
-    logger.info("User found")
-    
-    if not pwd_context.verify(form_data.password, user.hashed_password):
-        logger.warning("Password failed")
-        raise HTTPException(status_code=401, detail="Incorrect credentials")
+        password_match = pwd_context.verify(form_data.password, user.hashed_password)
+        logger.info("PASSWORD_MATCH: %s", password_match)
         
-    logger.info("Password verified")
-    
-    # Generate access token (15 min) — include token_version for replay protection
-    tv = getattr(user, 'token_version', 0) or 0
-    token_data = {"sub": user.email, "user_id": user.id, "token_version": tv}
-    access_token = create_access_token(data=token_data)
-    
-    # Generate refresh token (7 days)
-    refresh_token = create_refresh_token(data=token_data)
-    
-    # Store hashed refresh token in DB
-    user.hashed_refresh_token = pwd_context.hash(refresh_token)
-    db.commit()
-    
-    logger.info("JWT access + refresh tokens generated")
-    
-    # Audit: login event (background)
-    background_tasks.add_task(
-        log_action, user.id, user.organization_id or 0,
-        "LOGIN", "user", user.id
-    )
-    
-    return {
-        "access_token": access_token,
-        "refresh_token": refresh_token,
-        "token_type": "bearer"
-    }
+        if not password_match:
+            raise HTTPException(status_code=401, detail="Incorrect credentials")
+        
+        # Generate access token (15 min) — include org_id + token_version
+        tv = getattr(user, 'token_version', 0) or 0
+        token_data = {
+            "sub": user.email,
+            "user_id": user.id,
+            "organization_id": user.organization_id,
+            "token_version": tv
+        }
+        access_token = create_access_token(data=token_data)
+        
+        # Generate refresh token (7 days)
+        refresh_token = create_refresh_token(data=token_data)
+        
+        # Store hashed refresh token in DB
+        user.hashed_refresh_token = pwd_context.hash(refresh_token)
+        db.commit()
+        
+        logger.info("TOKEN_CREATED: True (user=%s)", user.email)
+        
+        # Audit: login event (background)
+        background_tasks.add_task(
+            log_action, user.id, user.organization_id or 0,
+            "LOGIN", "user", user.id
+        )
+        
+        return {
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+            "token_type": "bearer"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("LOGIN_ERROR: %s", str(e), exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.post("/refresh")
