@@ -2,6 +2,14 @@ from pydantic import BaseModel, Field, EmailStr
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 
+# --- Organization Schemas ---
+class OrganizationResponse(BaseModel):
+    id: int
+    name: str
+    ai_decision_mode: Optional[str] = "assisted"
+    class Config:
+        from_attributes = True
+
 # --- Product Schemas ---
 class ProductBase(BaseModel):
     # Stricter character validations
