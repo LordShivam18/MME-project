@@ -174,93 +174,114 @@ def create_order(request: Request, payload: schemas.OrderCreate, db: Session = D
     org_id = _org_id(current_user)
     require_active_subscription(db, org_id)
 
-    # 1. Verify Contact Ownership
-    contact = db.query(models.Contact).filter(
-        models.Contact.id == payload.contact_id,
-        models.Contact.organization_id == org_id,
-        models.Contact.is_deleted == False
-    ).first()
-    if not contact:
-        raise HTTPException(status_code=404, detail="Contact not found or does not belong to your organization")
-
-    # 2. Setup Atomic Transaction Block
-    total_amount = 0.0
-    new_order = models.Order(
-        organization_id=org_id,
-        contact_id=payload.contact_id,
-        status="pending"
-    )
-    db.add(new_order)
-    db.flush() # Yields new_order.id
-
-    history = models.OrderStatusHistory(
-        order_id=new_order.id,
-        from_status=None,
-        to_status="pending",
-        changed_by=current_user.get("email", "system")
-    )
-    db.add(history)
-
-    # 3. Process Items and Compute Total strictly on Server
-    for item in payload.items:
-        # Verify Product Ownership
-        product = db.query(models.Product).filter(
-            models.Product.id == item.product_id,
-            models.Product.shop_id == org_id,
-            models.Product.is_deleted == False
+    try:
+        # 1. Verify Contact Ownership
+        contact = db.query(models.Contact).filter(
+            models.Contact.id == payload.contact_id,
+            models.Contact.organization_id == org_id,
+            models.Contact.is_deleted == False
         ).first()
-        
-        if not product:
-            db.rollback()
-            raise HTTPException(status_code=400, detail=f"Product ID {item.product_id} invalid or unauthorized")
-        
-        line_price = product.selling_price
-        total_amount += (line_price * item.quantity)
-        
-        order_item = models.OrderItem(
-            order_id=new_order.id,
-            product_id=product.id,
-            quantity=item.quantity,
-            price_at_time=line_price
+        if not contact:
+            raise HTTPException(status_code=404, detail="Contact not found or does not belong to your organization")
+
+        # Validate items
+        if not payload.items or len(payload.items) == 0:
+            raise HTTPException(status_code=400, detail="Order must contain at least one item")
+
+        # 2. Setup Atomic Transaction Block
+        total_amount = 0.0
+        new_order = models.Order(
+            organization_id=org_id,
+            contact_id=payload.contact_id,
+            status="pending"
         )
-        db.add(order_item)
-        
-        # AI Engine Auto-Capture: Order Adjustment
-        insight = db.query(models.ProductInsight).filter(
-            models.ProductInsight.product_id == product.id,
-            models.ProductInsight.organization_id == org_id
-        ).first()
-        if insight:
-            from logic_engine import InventoryLogic
-            inv = db.query(models.Inventory).filter(
-                models.Inventory.product_id == product.id,
-                models.Inventory.shop_id == org_id
-            ).first()
-            if inv:
-                lead_time = product.lead_time_days or 7
-                suggested_qty = InventoryLogic.suggest_order_quantity(
-                    current_inventory=inv.quantity_on_hand,
-                    reorder_point=inv.reorder_point,
-                    predicted_daily_demand=insight.predicted_daily_demand,
-                    lead_time_days=lead_time
-                )
-                
-                # Only log if there was a non-zero suggestion
-                if suggested_qty > 0:
-                    adj = models.OrderAdjustment(
-                        organization_id=org_id,
-                        product_id=product.id,
-                        suggested_qty=suggested_qty,
-                        actual_qty=item.quantity,
-                        adjustment_reason="Auto-captured on order creation"
-                    )
-                    db.add(adj)
+        db.add(new_order)
+        db.flush() # Yields new_order.id
 
-    new_order.total_amount = total_amount
-    db.commit()
-    db.refresh(new_order)
-    
-    return new_order
+        history = models.OrderStatusHistory(
+            order_id=new_order.id,
+            from_status=None,
+            to_status="pending",
+            changed_by=current_user.get("email", "system")
+        )
+        db.add(history)
+
+        # 3. Process Items and Compute Total strictly on Server
+        for item in payload.items:
+            if not item.product_id or item.quantity <= 0:
+                db.rollback()
+                raise HTTPException(status_code=400, detail=f"Invalid item: product_id={item.product_id}, quantity={item.quantity}")
+
+            # Verify Product Ownership
+            product = db.query(models.Product).filter(
+                models.Product.id == item.product_id,
+                models.Product.shop_id == org_id,
+                models.Product.is_deleted == False
+            ).first()
+            
+            if not product:
+                db.rollback()
+                logger.warning(f"Order: product {item.product_id} not found for org {org_id}")
+                raise HTTPException(status_code=400, detail=f"Product ID {item.product_id} invalid or unauthorized")
+            
+            logger.info(f"Order item: product={product.name} (id={product.id}), qty={item.quantity}, price={product.selling_price}")
+
+            line_price = product.selling_price or 0
+            total_amount += (line_price * item.quantity)
+            
+            order_item = models.OrderItem(
+                order_id=new_order.id,
+                product_id=product.id,
+                quantity=item.quantity,
+                price_at_time=line_price
+            )
+            db.add(order_item)
+            
+            # AI Engine Auto-Capture: Order Adjustment
+            try:
+                insight = db.query(models.ProductInsight).filter(
+                    models.ProductInsight.product_id == product.id,
+                    models.ProductInsight.organization_id == org_id
+                ).first()
+                if insight:
+                    from logic_engine import InventoryLogic
+                    inv = db.query(models.Inventory).filter(
+                        models.Inventory.product_id == product.id,
+                        models.Inventory.shop_id == org_id
+                    ).first()
+                    if inv:
+                        lead_time = product.lead_time_days or 7
+                        suggested_qty = InventoryLogic.suggest_order_quantity(
+                            current_inventory=inv.quantity_on_hand,
+                            reorder_point=inv.reorder_point,
+                            predicted_daily_demand=insight.predicted_daily_demand,
+                            lead_time_days=lead_time
+                        )
+                        if suggested_qty > 0:
+                            adj = models.OrderAdjustment(
+                                organization_id=org_id,
+                                product_id=product.id,
+                                suggested_qty=suggested_qty,
+                                actual_qty=item.quantity,
+                                adjustment_reason="Auto-captured on order creation"
+                            )
+                            db.add(adj)
+            except Exception as ai_err:
+                logger.warning(f"Order: AI capture skipped for product {product.id}: {str(ai_err)}")
+
+        new_order.total_amount = total_amount
+        db.commit()
+        db.refresh(new_order)
+        
+        logger.info(f"Order {new_order.id} created: {len(payload.items)} items, total={total_amount}")
+        return new_order
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Order creation failed: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to create order. Please try again.")
 
 @router.get("/orders/{order_id}", response_model=schemas.OrderResponse)
 def get_order(order_id: int, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
