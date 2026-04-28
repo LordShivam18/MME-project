@@ -347,8 +347,14 @@ app.include_router(orders.router, prefix="/api/v1")
 from routers import chat
 app.include_router(chat.router, prefix="/api/v1")
 
-from routers import auth_routes
-app.include_router(auth_routes.router, prefix="/api/v1")
+try:
+    from routers import auth_routes
+    app.include_router(auth_routes.router, prefix="/api/v1")
+    logger.info("✅ Auth routes registered: /api/v1/auth/*")
+except Exception as e:
+    logger.error("🚨 CRITICAL: Failed to load auth_routes: %s", str(e))
+    import traceback
+    traceback.print_exc()
 
 # ---------------- HEALTH CHECK ----------------
 @app.get("/health")

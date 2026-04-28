@@ -50,6 +50,7 @@ export default function Login({ onLogin }) {
         window.location.href = "/dashboard";
       }
     } catch (err) {
+      console.log("LOGIN ERROR:", err.response);
       setError(err.response?.data?.detail || "System unable to authenticate. Try again.");
     } finally {
       setIsLoading(false);
@@ -66,6 +67,7 @@ export default function Login({ onLogin }) {
       setSuccess('Verification code sent to your email.');
       setView('otp');
     } catch (err) {
+      console.log("SIGNUP INITIATE ERROR:", err.response);
       setError(err.response?.data?.detail || "Failed to initiate signup");
     } finally {
       setIsLoading(false);
@@ -83,6 +85,7 @@ export default function Login({ onLogin }) {
       localStorage.setItem("refresh_token", res.data.refresh_token);
       window.location.href = "/onboarding";
     } catch (err) {
+      console.log("SIGNUP VERIFY ERROR:", err.response);
       setError(err.response?.data?.detail || "Verification failed");
     } finally {
       setIsLoading(false);
@@ -99,6 +102,7 @@ export default function Login({ onLogin }) {
       setSuccess('If an account exists, a reset code has been sent.');
       setView('forgot_otp');
     } catch (err) {
+      console.log("FORGOT INITIATE ERROR:", err.response);
       setError(err.response?.data?.detail || "Failed to send reset code");
     } finally {
       setIsLoading(false);
@@ -115,6 +119,7 @@ export default function Login({ onLogin }) {
       setSuccess('Password reset successful!');
       setTimeout(() => { setView('login'); resetForm(); }, 1500);
     } catch (err) {
+      console.log("FORGOT VERIFY ERROR:", err.response);
       setError(err.response?.data?.detail || "Reset failed");
     } finally {
       setIsLoading(false);
