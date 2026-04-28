@@ -16,6 +16,21 @@ const navItems = [
   { to: '/settings',   icon: '⚙️', label: 'Settings' },
 ];
 
+const priorityColors = {
+  high:   { bg: '#fef2f2', border: '#fecaca', text: '#991b1b', dot: '#ef4444' },
+  medium: { bg: '#fffbeb', border: '#fde68a', text: '#92400e', dot: '#f59e0b' },
+  low:    { bg: '#ffffff', border: '#e5e7eb', text: '#374151', dot: '#6b7280' },
+};
+
+const typeIcons = {
+  low_stock: '📉',
+  ai_alert: '🤖',
+  order_update: '🚚',
+  payment: '💳',
+  insight: '⚡',
+  system: 'ℹ️',
+};
+
 export default function Layout({ children }) {
   const navigate = useNavigate();
   const [notifications, setNotifications] = useState([]);
@@ -34,13 +49,22 @@ export default function Layout({ children }) {
 
   useEffect(() => {
     fetchNotifications();
-    const interval = setInterval(fetchNotifications, 60000);
+    const interval = setInterval(fetchNotifications, 15000); // 15s polling
     return () => clearInterval(interval);
   }, []);
 
   const handleMarkRead = async (id) => {
     try {
       await axiosClient.patch(`/api/v1/notifications/${id}/read`, { is_read: true });
+      fetchNotifications();
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleMarkAllRead = async () => {
+    try {
+      await axiosClient.patch('/api/v1/notifications/read-all');
       fetchNotifications();
     } catch (err) {
       console.error(err);
@@ -110,33 +134,60 @@ export default function Layout({ children }) {
           {isDropdownOpen && (
             <div style={{
               position: 'absolute', top: '50px', right: '1.5rem',
-              width: '320px', backgroundColor: 'white',
-              borderRadius: '8px', boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
-              zIndex: 1000, maxHeight: '400px', overflowY: 'auto',
+              width: '360px', backgroundColor: 'white',
+              borderRadius: '12px', boxShadow: '0 8px 24px rgba(0,0,0,0.15)',
+              zIndex: 1000, maxHeight: '480px', overflowY: 'auto',
               border: '1px solid #e5e7eb'
             }}>
-              <div style={{ padding: '1rem', borderBottom: '1px solid #e5e7eb', fontWeight: 'bold', backgroundColor: '#f9fafb' }}>
-                Notifications
+              <div style={{ padding: '1rem', borderBottom: '1px solid #e5e7eb', display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#f9fafb', borderRadius: '12px 12px 0 0' }}>
+                <strong>Notifications</strong>
+                {unreadCount > 0 && (
+                  <button onClick={handleMarkAllRead} style={{ background: 'none', border: 'none', color: '#3b82f6', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600 }}>
+                    Mark all read
+                  </button>
+                )}
               </div>
               {notifications.length === 0 ? (
-                <div style={{ padding: '1rem', textAlign: 'center', color: '#6b7280' }}>No notifications</div>
+                <div style={{ padding: '2rem', textAlign: 'center', color: '#6b7280' }}>No notifications yet</div>
               ) : (
-                notifications.map(n => (
-                  <div key={n.id} style={{
-                    padding: '1rem', borderBottom: '1px solid #f3f4f6',
-                    backgroundColor: n.is_read ? 'white' : '#eff6ff',
-                    cursor: 'pointer'
-                  }} onClick={() => !n.is_read && handleMarkRead(n.id)}>
-                    <div style={{ fontSize: '0.875rem', color: '#1f2937', marginBottom: '0.25rem' }}>
-                      {n.message}
+                notifications.slice(0, 20).map(n => {
+                  const colors = priorityColors[n.priority] || priorityColors.low;
+                  const icon = typeIcons[n.type] || '🔔';
+                  return (
+                    <div key={n.id} style={{
+                      padding: '0.75rem 1rem', 
+                      borderBottom: '1px solid #f3f4f6',
+                      backgroundColor: n.is_read ? '#fff' : colors.bg,
+                      cursor: n.is_read ? 'default' : 'pointer',
+                      borderLeft: n.is_read ? '3px solid transparent' : `3px solid ${colors.dot}`,
+                      transition: 'background 0.15s ease'
+                    }} onClick={() => !n.is_read && handleMarkRead(n.id)}>
+                      <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.5rem' }}>
+                        <span style={{ fontSize: '1.1rem', flexShrink: 0 }}>{icon}</span>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontSize: '0.875rem', color: colors.text, fontWeight: n.is_read ? 400 : 600 }}>
+                            {n.message}
+                          </div>
+                          <div style={{ fontSize: '0.7rem', color: '#9ca3af', marginTop: '0.25rem', display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                            {new Date(n.created_at).toLocaleString()}
+                            <span style={{ 
+                              padding: '1px 6px', 
+                              borderRadius: '4px', 
+                              fontSize: '0.65rem', 
+                              fontWeight: 700,
+                              textTransform: 'uppercase',
+                              backgroundColor: colors.bg, 
+                              color: colors.dot,
+                              border: `1px solid ${colors.border}`
+                            }}>
+                              {n.priority}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
                     </div>
-                    <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>
-                      {new Date(n.created_at).toLocaleString()}
-                      {n.type === 'insight' && <span style={{ marginLeft: '8px', color: '#8b5cf6', fontWeight: 'bold' }}>AI Insight</span>}
-                      {n.type === 'low_stock' && <span style={{ marginLeft: '8px', color: '#ef4444', fontWeight: 'bold' }}>Low Stock</span>}
-                    </div>
-                  </div>
-                ))
+                  );
+                })
               )}
             </div>
           )}

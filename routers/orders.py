@@ -295,6 +295,7 @@ def update_order_status(order_id: int, payload: schemas.OrderUpdateStatus, db: S
         "cancelled": []
     }
 
+    history_added = False
     if payload.status is not None and payload.status != order.status:
         if payload.status not in ALLOWED_TRANSITIONS.get(order.status, []):
             raise HTTPException(status_code=400, detail=f"Invalid transition from {order.status} to {payload.status}")
@@ -307,6 +308,7 @@ def update_order_status(order_id: int, payload: schemas.OrderUpdateStatus, db: S
         )
         db.add(history)
         order.status = payload.status
+        history_added = True
 
     if payload.delivery_status is not None:
         order.delivery_status = payload.delivery_status
@@ -316,4 +318,16 @@ def update_order_status(order_id: int, payload: schemas.OrderUpdateStatus, db: S
     order.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(order)
+    
+    # Notification trigger for order status changes
+    if history_added:
+        notif = models.Notification(
+            organization_id=org_id,
+            type="order_update",
+            priority="medium" if order.status in ["shipped", "delivered"] else "low",
+            message=f"Order #{order.id} status changed to {order.status}."
+        )
+        db.add(notif)
+        db.commit()
+    
     return order

@@ -1298,6 +1298,16 @@ def mark_notification_read(notif_id: int, payload: schemas.NotificationUpdate, d
     db.refresh(notif)
     return notif
 
+@router.patch("/notifications/read-all")
+def mark_all_notifications_read(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    org_id = _org_id(current_user)
+    db.query(models.Notification).filter(
+        models.Notification.organization_id == org_id,
+        models.Notification.is_read == False
+    ).update({"is_read": True})
+    db.commit()
+    return {"message": "All notifications marked as read"}
+
 # ============================================================
 # PLATFORM ADMIN ENDPOINTS
 # ============================================================
