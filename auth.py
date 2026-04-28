@@ -120,6 +120,17 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
         "is_platform_admin": user.is_platform_admin
     }
 
+def require_platform_admin(current_user: dict = Depends(get_current_user)):
+    """
+    Ensures the current user has platform administrator privileges.
+    The is_platform_admin flag is securely sourced from the DB via get_current_user.
+    """
+    if not current_user.get("is_platform_admin"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied: Platform administrator privileges required"
+        )
+    return current_user
 
 # ---------------- RATE LIMIT KEY ----------------
 def rate_limit_key_func(request: Request) -> str:

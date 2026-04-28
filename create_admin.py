@@ -53,4 +53,15 @@ if __name__ == "__main__":
         
     identifier = sys.argv[1]
     password = sys.argv[2] if len(sys.argv) > 2 else None
+    
+    if password and len(password) < 8:
+        print("Error: Password must be at least 8 characters long.")
+        sys.exit(1)
+        
+    print(f"\nTarget Identifier: {identifier}")
+    confirm = input("Are you sure you want to create/promote this user to platform admin? (yes/no): ")
+    if confirm.lower() != 'yes':
+        print("Operation cancelled.")
+        sys.exit(0)
+        
     promote_or_create_admin(identifier, password)

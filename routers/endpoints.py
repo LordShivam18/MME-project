@@ -14,7 +14,7 @@ from models import core as models
 from schemas import core as schemas
 from services.prediction_service import get_product_prediction, invalidate_prediction_cache
 from limiter import limiter
-from auth import get_current_user, pwd_context, create_access_token, create_refresh_token, decode_token
+from auth import get_current_user, pwd_context, create_access_token, create_refresh_token, decode_token, require_platform_admin
 from fastapi.security import OAuth2PasswordRequestForm
 
 logger = logging.getLogger(__name__)
@@ -1297,3 +1297,76 @@ def mark_notification_read(notif_id: int, payload: schemas.NotificationUpdate, d
     db.commit()
     db.refresh(notif)
     return notif
+
+# ============================================================
+# PLATFORM ADMIN ENDPOINTS
+# ============================================================
+@router.get("/admin/stats")
+def get_admin_stats(db: Session = Depends(get_db), current_admin: dict = Depends(require_platform_admin)):
+    """
+    Returns global platform statistics for the platform administrator.
+    Bypasses tenant isolation by completely omitting organization_id filters.
+    """
+    try:
+        total_users = db.query(models.User).filter(models.User.is_deleted == False).count()
+        total_organizations = db.query(models.Organization).count()
+        total_products = db.query(models.Product).filter(models.Product.is_deleted == False).count()
+        
+        # Active users last 7 days based on updated_at (or could use audit logs)
+        seven_days_ago = datetime.utcnow() - timedelta(days=7)
+        active_users_last_7_days = db.query(models.User).filter(
+            models.User.is_deleted == False,
+            models.User.updated_at >= seven_days_ago
+        ).count()
+        
+        # Average AI Accuracy across the entire platform
+        # Calculate from OrderAdjustment table
+        adjustments = db.query(models.OrderAdjustment).all()
+        avg_ai_accuracy = 0.0
+        if adjustments:
+            total_error = sum(adj.error_percentage for adj in adjustments)
+            avg_error = total_error / len(adjustments)
+            avg_ai_accuracy = max(0, 100 - avg_error)
+
+        # Top 5 Organizations by number of sales
+        from sqlalchemy import func
+        top_orgs_query = db.query(
+            models.Organization.id,
+            models.Organization.name,
+            func.count(models.Sale.id).label("sales_count")
+        ).join(models.Sale, models.Sale.organization_id == models.Organization.id) \
+         .group_by(models.Organization.id, models.Organization.name) \
+         .order_by(func.count(models.Sale.id).desc()) \
+         .limit(5).all()
+         
+        top_5_organizations = [
+            {"id": row.id, "name": row.name, "metric": row.sales_count} for row in top_orgs_query
+        ]
+        
+        # Low performing orgs (for simplicity, orgs with highest average error percentage)
+        low_orgs_query = db.query(
+            models.Organization.id,
+            models.Organization.name,
+            func.avg(models.OrderAdjustment.error_percentage).label("avg_error")
+        ).join(models.OrderAdjustment, models.OrderAdjustment.organization_id == models.Organization.id) \
+         .group_by(models.Organization.id, models.Organization.name) \
+         .having(func.avg(models.OrderAdjustment.error_percentage) > 20) \
+         .order_by(func.avg(models.OrderAdjustment.error_percentage).desc()) \
+         .limit(5).all()
+
+        low_performing_orgs = [
+            {"id": row.id, "name": row.name, "metric": round(row.avg_error, 2)} for row in low_orgs_query
+        ]
+
+        return {
+            "total_users": total_users,
+            "total_organizations": total_organizations,
+            "total_products": total_products,
+            "active_users_last_7_days": active_users_last_7_days,
+            "average_ai_accuracy": round(avg_ai_accuracy, 2),
+            "top_5_organizations": top_5_organizations,
+            "low_performing_orgs": low_performing_orgs
+        }
+    except Exception as e:
+        logger.error(f"Failed to fetch admin stats: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to fetch platform statistics")

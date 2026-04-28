@@ -6,7 +6,15 @@ export default function AdminDashboard() {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [isAdmin, setIsAdmin] = useState(false);
-  const [stats, setStats] = useState({ users: 0, organizations: 0, products: 0 });
+  const [stats, setStats] = useState({ 
+    total_users: 0, 
+    total_organizations: 0, 
+    total_products: 0,
+    active_users_last_7_days: 0,
+    average_ai_accuracy: 0,
+    top_5_organizations: [],
+    low_performing_orgs: []
+  });
 
   useEffect(() => {
     const verifyAdmin = async () => {
@@ -14,9 +22,8 @@ export default function AdminDashboard() {
         const meRes = await axiosClient.get('/api/v1/me');
         if (meRes.data && meRes.data.user && meRes.data.user.is_platform_admin) {
           setIsAdmin(true);
-          // Here we would typically fetch platform-wide stats
-          // For now, using mock stats for the placeholder
-          setStats({ users: 15, organizations: 5, products: 1240 });
+          const statsRes = await axiosClient.get('/api/v1/admin/stats');
+          setStats(statsRes.data);
         } else {
           navigate('/dashboard'); // Kick out non-admins
         }
@@ -61,24 +68,57 @@ export default function AdminDashboard() {
         </div>
       </header>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '1.5rem', marginBottom: '2rem' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1.5rem', marginBottom: '2rem' }}>
         <div style={{ background: '#eff6ff', padding: '1.5rem', borderRadius: '8px', border: '1px solid #bfdbfe' }}>
-          <h3 style={{ margin: '0 0 0.5rem 0', color: '#1e40af' }}>Organizations</h3>
-          <p style={{ fontSize: '2rem', fontWeight: 'bold', margin: 0, color: '#1d4ed8' }}>{stats.organizations}</p>
+          <h3 style={{ margin: '0 0 0.5rem 0', color: '#1e40af', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>🏢 Organizations</h3>
+          <p style={{ fontSize: '2rem', fontWeight: 'bold', margin: 0, color: '#1d4ed8' }}>{stats.total_organizations}</p>
         </div>
         <div style={{ background: '#f0fdf4', padding: '1.5rem', borderRadius: '8px', border: '1px solid #bbf7d0' }}>
-          <h3 style={{ margin: '0 0 0.5rem 0', color: '#166534' }}>Active Users</h3>
-          <p style={{ fontSize: '2rem', fontWeight: 'bold', margin: 0, color: '#15803d' }}>{stats.users}</p>
+          <h3 style={{ margin: '0 0 0.5rem 0', color: '#166534', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>👥 Active Users (7d)</h3>
+          <p style={{ fontSize: '2rem', fontWeight: 'bold', margin: 0, color: '#15803d' }}>{stats.active_users_last_7_days} <span style={{fontSize: '1rem', color: '#6b7280', fontWeight: 'normal'}}>/ {stats.total_users} total</span></p>
         </div>
-        <div style={{ background: '#fef2f2', padding: '1.5rem', borderRadius: '8px', border: '1px solid #fecaca' }}>
-          <h3 style={{ margin: '0 0 0.5rem 0', color: '#991b1b' }}>Total Products Tracked</h3>
-          <p style={{ fontSize: '2rem', fontWeight: 'bold', margin: 0, color: '#b91c1c' }}>{stats.products}</p>
+        <div style={{ background: '#fffbeb', padding: '1.5rem', borderRadius: '8px', border: '1px solid #fde68a' }}>
+          <h3 style={{ margin: '0 0 0.5rem 0', color: '#92400e', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>📦 Tracked Products</h3>
+          <p style={{ fontSize: '2rem', fontWeight: 'bold', margin: 0, color: '#b45309' }}>{stats.total_products}</p>
+        </div>
+        <div style={{ background: stats.average_ai_accuracy >= 80 ? '#f0fdf4' : '#fef2f2', padding: '1.5rem', borderRadius: '8px', border: `1px solid ${stats.average_ai_accuracy >= 80 ? '#bbf7d0' : '#fecaca'}` }}>
+          <h3 style={{ margin: '0 0 0.5rem 0', color: stats.average_ai_accuracy >= 80 ? '#166534' : '#991b1b', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>🤖 AI Accuracy</h3>
+          <p style={{ fontSize: '2rem', fontWeight: 'bold', margin: 0, color: stats.average_ai_accuracy >= 80 ? '#15803d' : '#b91c1c' }}>{stats.average_ai_accuracy}%</p>
         </div>
       </div>
 
-      <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: '8px', padding: '2rem', textAlign: 'center', color: '#6b7280' }}>
-        <h2>Admin Management Features</h2>
-        <p>Tenant management, billing overviews, and global settings will go here.</p>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '1.5rem' }}>
+        <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: '8px', padding: '1.5rem' }}>
+          <h3 style={{ margin: '0 0 1rem 0', color: '#374151' }}>🚀 Top Organizations (by Activity)</h3>
+          {stats.top_5_organizations.length > 0 ? (
+            <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+              {stats.top_5_organizations.map((org, i) => (
+                <li key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.5rem 0', borderBottom: '1px solid #f3f4f6' }}>
+                  <span>{org.name}</span>
+                  <span style={{ fontWeight: 'bold', color: '#10b981' }}>{org.metric} sales</span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p style={{ color: '#6b7280' }}>No data available.</p>
+          )}
+        </div>
+
+        <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: '8px', padding: '1.5rem' }}>
+          <h3 style={{ margin: '0 0 1rem 0', color: '#374151' }}>⚠️ High Error Organizations</h3>
+          {stats.low_performing_orgs.length > 0 ? (
+            <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+              {stats.low_performing_orgs.map((org, i) => (
+                <li key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.5rem 0', borderBottom: '1px solid #f3f4f6' }}>
+                  <span>{org.name}</span>
+                  <span style={{ fontWeight: 'bold', color: '#ef4444' }}>{org.metric}% error rate</span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p style={{ color: '#6b7280' }}>All organizations are performing well!</p>
+          )}
+        </div>
       </div>
     </div>
   );
