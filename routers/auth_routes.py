@@ -109,105 +109,127 @@ def _create_user_tokens(user, db: Session):
 @router.post("/auth/signup/initiate")
 def signup_initiate(payload: SignupInitiate, db: Session = Depends(get_db)):
     """Step 1: Send OTP to email for signup verification."""
-    # Cooldown
-    recent = db.query(models.OTPCode).filter(
-        models.OTPCode.email == payload.email,
-        models.OTPCode.purpose == "signup",
-        models.OTPCode.created_at >= datetime.utcnow() - timedelta(seconds=OTP_COOLDOWN_SECONDS)
-    ).first()
-    if recent:
-        raise HTTPException(status_code=429, detail="Please wait before requesting another code")
-    
-    # Generic response whether user exists or not (prevent enumeration)
-    existing = db.query(models.User).filter(models.User.email == payload.email).first()
-    if existing:
+    try:
+        logger.info("SIGNUP_INITIATE: email=%s", payload.email)
+        
+        # Cooldown
+        recent = db.query(models.OTPCode).filter(
+            models.OTPCode.email == payload.email,
+            models.OTPCode.purpose == "signup",
+            models.OTPCode.created_at >= datetime.utcnow() - timedelta(seconds=OTP_COOLDOWN_SECONDS)
+        ).first()
+        if recent:
+            raise HTTPException(status_code=429, detail="Please wait before requesting another code")
+        
+        # Generic response whether user exists or not (prevent enumeration)
+        existing = db.query(models.User).filter(models.User.email == payload.email).first()
+        if existing:
+            logger.info("SIGNUP_INITIATE: user already exists, returning generic response")
+            return {"message": "If this email is available, a verification code has been sent."}
+        
+        otp = generate_otp()
+        logger.info("SIGNUP_INITIATE: OTP generated for %s", payload.email)
+        
+        # Invalidate old OTPs
+        db.query(models.OTPCode).filter(
+            models.OTPCode.email == payload.email,
+            models.OTPCode.purpose == "signup"
+        ).delete()
+        
+        otp_record = models.OTPCode(
+            email=payload.email,
+            hashed_otp=hash_otp(otp),
+            purpose="signup",
+            expires_at=datetime.utcnow() + timedelta(minutes=OTP_EXPIRY_MINUTES)
+        )
+        db.add(otp_record)
+        db.commit()
+        
+        send_otp_email(payload.email, otp, "signup")
+        logger.info("SIGNUP_INITIATE: OTP email sent for %s", payload.email)
+        
         return {"message": "If this email is available, a verification code has been sent."}
-    
-    otp = generate_otp()
-    
-    # Invalidate old OTPs
-    db.query(models.OTPCode).filter(
-        models.OTPCode.email == payload.email,
-        models.OTPCode.purpose == "signup"
-    ).delete()
-    
-    otp_record = models.OTPCode(
-        email=payload.email,
-        hashed_otp=hash_otp(otp),
-        purpose="signup",
-        expires_at=datetime.utcnow() + timedelta(minutes=OTP_EXPIRY_MINUTES)
-    )
-    db.add(otp_record)
-    db.commit()
-    
-    send_otp_email(payload.email, otp, "signup")
-    logger.info(f"Signup OTP initiated for: {payload.email}")
-    
-    return {"message": "If this email is available, a verification code has been sent."}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("SIGNUP_INITIATE_ERROR: %s", str(e), exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal auth error")
 
 
 @router.post("/auth/signup/verify")
 def signup_verify(payload: OTPVerify, db: Session = Depends(get_db)):
     """Step 2: Verify OTP and create account."""
-    otp_record = db.query(models.OTPCode).filter(
-        models.OTPCode.email == payload.email,
-        models.OTPCode.purpose == "signup"
-    ).order_by(models.OTPCode.created_at.desc()).first()
-    
-    if not otp_record:
-        raise HTTPException(status_code=400, detail="No verification pending for this email")
-    
-    if datetime.utcnow() > otp_record.expires_at:
+    try:
+        logger.info("SIGNUP_VERIFY: email=%s", payload.email)
+        
+        otp_record = db.query(models.OTPCode).filter(
+            models.OTPCode.email == payload.email,
+            models.OTPCode.purpose == "signup"
+        ).order_by(models.OTPCode.created_at.desc()).first()
+        
+        if not otp_record:
+            raise HTTPException(status_code=400, detail="No verification pending for this email")
+        
+        if datetime.utcnow() > otp_record.expires_at:
+            db.delete(otp_record)
+            db.commit()
+            raise HTTPException(status_code=400, detail="Verification code expired")
+        
+        if otp_record.attempts >= OTP_MAX_ATTEMPTS:
+            db.delete(otp_record)
+            db.commit()
+            raise HTTPException(status_code=400, detail="Too many attempts. Request a new code.")
+        
+        otp_record.attempts += 1
+        if not verify_otp_hash(payload.otp, otp_record.hashed_otp):
+            db.commit()
+            raise HTTPException(status_code=400, detail="Invalid verification code")
+        
+        # Race condition guard
+        existing = db.query(models.User).filter(models.User.email == payload.email).first()
+        if existing:
+            db.delete(otp_record)
+            db.commit()
+            raise HTTPException(status_code=400, detail="Account already exists")
+        
+        # Create user + default org
+        org = models.Organization(name=f"{payload.email.split('@')[0]}'s Organization")
+        db.add(org)
+        db.flush()
+        
+        user = models.User(
+            email=payload.email,
+            hashed_password=pwd_context.hash(payload.password),
+            organization_id=org.id,
+            role="admin"
+        )
+        db.add(user)
+        
+        # Create free subscription
+        sub = models.Subscription(organization_id=org.id, plan="free", status="active")
+        db.add(sub)
+        
         db.delete(otp_record)
         db.commit()
-        raise HTTPException(status_code=400, detail="Verification code expired")
-    
-    if otp_record.attempts >= OTP_MAX_ATTEMPTS:
-        db.delete(otp_record)
-        db.commit()
-        raise HTTPException(status_code=400, detail="Too many attempts. Request a new code.")
-    
-    otp_record.attempts += 1
-    if not verify_otp_hash(payload.otp, otp_record.hashed_otp):
-        db.commit()
-        raise HTTPException(status_code=400, detail="Invalid verification code")
-    
-    # Race condition guard
-    existing = db.query(models.User).filter(models.User.email == payload.email).first()
-    if existing:
-        db.delete(otp_record)
-        db.commit()
-        raise HTTPException(status_code=400, detail="Account already exists")
-    
-    # Create user + default org
-    org = models.Organization(name=f"{payload.email.split('@')[0]}'s Organization")
-    db.add(org)
-    db.flush()
-    
-    user = models.User(
-        email=payload.email,
-        hashed_password=pwd_context.hash(payload.password),
-        organization_id=org.id,
-        role="admin"
-    )
-    db.add(user)
-    
-    # Create free subscription
-    sub = models.Subscription(organization_id=org.id, plan="free", status="active")
-    db.add(sub)
-    
-    db.delete(otp_record)
-    db.commit()
-    db.refresh(user)
-    
-    access_token, refresh_token = _create_user_tokens(user, db)
-    
-    return {
-        "access_token": access_token,
-        "refresh_token": refresh_token,
-        "token_type": "bearer",
-        "message": "Account created successfully"
-    }
+        db.refresh(user)
+        
+        logger.info("SIGNUP_VERIFY: user created id=%s, org=%s", user.id, org.id)
+        
+        access_token, refresh_token = _create_user_tokens(user, db)
+        
+        logger.info("SIGNUP_VERIFY: auto-login tokens created for %s", user.email)
+        
+        return {
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+            "token_type": "bearer",
+            "message": "Account created successfully"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("SIGNUP_VERIFY_ERROR: %s", str(e), exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal auth error")
 
 
 # ============================================================
@@ -216,84 +238,103 @@ def signup_verify(payload: OTPVerify, db: Session = Depends(get_db)):
 @router.post("/auth/forgot/initiate")
 def forgot_initiate(payload: ForgotInitiate, db: Session = Depends(get_db)):
     """Send OTP for password reset."""
-    # Cooldown
-    recent = db.query(models.OTPCode).filter(
-        models.OTPCode.email == payload.email,
-        models.OTPCode.purpose == "forgot_password",
-        models.OTPCode.created_at >= datetime.utcnow() - timedelta(seconds=OTP_COOLDOWN_SECONDS)
-    ).first()
-    if recent:
-        raise HTTPException(status_code=429, detail="Please wait before requesting another code")
-    
-    # Always generic response
-    user = db.query(models.User).filter(models.User.email == payload.email).first()
-    
-    if user:
-        otp = generate_otp()
+    try:
+        logger.info("FORGOT_INITIATE: email=%s", payload.email)
         
-        db.query(models.OTPCode).filter(
+        # Cooldown
+        recent = db.query(models.OTPCode).filter(
             models.OTPCode.email == payload.email,
-            models.OTPCode.purpose == "forgot_password"
-        ).delete()
+            models.OTPCode.purpose == "forgot_password",
+            models.OTPCode.created_at >= datetime.utcnow() - timedelta(seconds=OTP_COOLDOWN_SECONDS)
+        ).first()
+        if recent:
+            raise HTTPException(status_code=429, detail="Please wait before requesting another code")
         
-        otp_record = models.OTPCode(
-            email=payload.email,
-            hashed_otp=hash_otp(otp),
-            purpose="forgot_password",
-            expires_at=datetime.utcnow() + timedelta(minutes=OTP_EXPIRY_MINUTES)
-        )
-        db.add(otp_record)
-        db.commit()
+        # Always generic response
+        user = db.query(models.User).filter(models.User.email == payload.email).first()
         
-        send_otp_email(payload.email, otp, "forgot_password")
-        logger.info(f"Password reset OTP initiated for: {payload.email}")
-    
-    return {"message": "If an account exists, a reset code has been sent."}
+        if user:
+            otp = generate_otp()
+            logger.info("FORGOT_INITIATE: OTP generated for %s", payload.email)
+            
+            db.query(models.OTPCode).filter(
+                models.OTPCode.email == payload.email,
+                models.OTPCode.purpose == "forgot_password"
+            ).delete()
+            
+            otp_record = models.OTPCode(
+                email=payload.email,
+                hashed_otp=hash_otp(otp),
+                purpose="forgot_password",
+                expires_at=datetime.utcnow() + timedelta(minutes=OTP_EXPIRY_MINUTES)
+            )
+            db.add(otp_record)
+            db.commit()
+            
+            send_otp_email(payload.email, otp, "forgot_password")
+            logger.info("FORGOT_INITIATE: OTP email sent for %s", payload.email)
+        else:
+            logger.info("FORGOT_INITIATE: no user found for %s (returning generic)", payload.email)
+        
+        return {"message": "If an account exists, a reset code has been sent."}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("FORGOT_INITIATE_ERROR: %s", str(e), exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal auth error")
 
 
 @router.post("/auth/forgot/verify")
 def forgot_verify(payload: ForgotVerify, db: Session = Depends(get_db)):
     """Verify OTP and reset password."""
-    otp_record = db.query(models.OTPCode).filter(
-        models.OTPCode.email == payload.email,
-        models.OTPCode.purpose == "forgot_password"
-    ).order_by(models.OTPCode.created_at.desc()).first()
-    
-    if not otp_record:
-        raise HTTPException(status_code=400, detail="No reset pending for this email")
-    
-    if datetime.utcnow() > otp_record.expires_at:
+    try:
+        logger.info("FORGOT_VERIFY: email=%s", payload.email)
+        
+        otp_record = db.query(models.OTPCode).filter(
+            models.OTPCode.email == payload.email,
+            models.OTPCode.purpose == "forgot_password"
+        ).order_by(models.OTPCode.created_at.desc()).first()
+        
+        if not otp_record:
+            raise HTTPException(status_code=400, detail="No reset pending for this email")
+        
+        if datetime.utcnow() > otp_record.expires_at:
+            db.delete(otp_record)
+            db.commit()
+            raise HTTPException(status_code=400, detail="Reset code expired")
+        
+        if otp_record.attempts >= OTP_MAX_ATTEMPTS:
+            db.delete(otp_record)
+            db.commit()
+            raise HTTPException(status_code=400, detail="Too many attempts. Request a new code.")
+        
+        otp_record.attempts += 1
+        if not verify_otp_hash(payload.otp, otp_record.hashed_otp):
+            db.commit()
+            raise HTTPException(status_code=400, detail="Invalid reset code")
+        
+        user = db.query(models.User).filter(models.User.email == payload.email).first()
+        if not user:
+            db.delete(otp_record)
+            db.commit()
+            raise HTTPException(status_code=400, detail="Account not found")
+        
+        # Update password
+        user.hashed_password = pwd_context.hash(payload.new_password)
+        # Invalidate refresh tokens
+        user.token_version += 1
+        user.hashed_refresh_token = None
+        
         db.delete(otp_record)
         db.commit()
-        raise HTTPException(status_code=400, detail="Reset code expired")
-    
-    if otp_record.attempts >= OTP_MAX_ATTEMPTS:
-        db.delete(otp_record)
-        db.commit()
-        raise HTTPException(status_code=400, detail="Too many attempts. Request a new code.")
-    
-    otp_record.attempts += 1
-    if not verify_otp_hash(payload.otp, otp_record.hashed_otp):
-        db.commit()
-        raise HTTPException(status_code=400, detail="Invalid reset code")
-    
-    user = db.query(models.User).filter(models.User.email == payload.email).first()
-    if not user:
-        db.delete(otp_record)
-        db.commit()
-        raise HTTPException(status_code=400, detail="Account not found")
-    
-    # Update password
-    user.hashed_password = pwd_context.hash(payload.new_password)
-    # Invalidate refresh tokens
-    user.token_version += 1
-    user.hashed_refresh_token = None
-    
-    db.delete(otp_record)
-    db.commit()
-    
-    logger.info(f"Password reset completed for: {payload.email}")
-    return {"message": "Password reset successful. Please login with your new password."}
+        
+        logger.info("FORGOT_VERIFY: password reset completed for %s", payload.email)
+        return {"message": "Password reset successful. Please login with your new password."}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("FORGOT_VERIFY_ERROR: %s", str(e), exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal auth error")
 
 
 # ============================================================

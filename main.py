@@ -41,6 +41,20 @@ async def lifespan(app: FastAPI):
     # Migrate: add columns if they don't exist (for existing DBs)
     try:
         with engine.connect() as conn:
+            # --- OTP Codes table (required for signup/forgot password) ---
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS otp_codes (
+                    id SERIAL PRIMARY KEY,
+                    email VARCHAR NOT NULL,
+                    hashed_otp VARCHAR NOT NULL,
+                    purpose VARCHAR NOT NULL,
+                    expires_at TIMESTAMP NOT NULL,
+                    attempts INTEGER DEFAULT 0 NOT NULL,
+                    created_at TIMESTAMP DEFAULT NOW()
+                )
+            """))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_otp_codes_email ON otp_codes (email)"))
+            logger.info("✅ otp_codes table ensured")
             # --- Users table ---
             conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS hashed_refresh_token VARCHAR"))
             conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS organization_id INTEGER"))
