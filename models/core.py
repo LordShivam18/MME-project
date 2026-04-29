@@ -347,14 +347,3 @@ class OrderStatusHistory(Base):
     
     # Relationships
     order = relationship("Order")
-
-
-class OTPCode(Base):
-    __tablename__ = "otp_codes"
-    id = Column(Integer, primary_key=True, index=True)
-    email = Column(String, nullable=False, index=True)
-    hashed_otp = Column(String, nullable=False)
-    purpose = Column(String, nullable=False)  # "signup" or "forgot_password"
-    expires_at = Column(DateTime, nullable=False)
-    attempts = Column(Integer, default=0, nullable=False, server_default="0")
-    created_at = Column(DateTime, default=datetime.utcnow)

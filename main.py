@@ -119,19 +119,6 @@ async def lifespan(app: FastAPI):
                 )
             """))
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_msgs_convo_created ON messages (conversation_id, created_at DESC)"))
-            # --- OTP table ---
-            conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS otp_codes (
-                    id SERIAL PRIMARY KEY,
-                    email VARCHAR NOT NULL,
-                    hashed_otp VARCHAR NOT NULL,
-                    purpose VARCHAR NOT NULL,
-                    expires_at TIMESTAMP NOT NULL,
-                    attempts INTEGER DEFAULT 0,
-                    created_at TIMESTAMP DEFAULT NOW()
-                )
-            """))
-            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_otp_email ON otp_codes (email)"))
             # --- product_insights AI columns (idempotent) ---
             pi_columns = [
                 ("demand_min", "FLOAT DEFAULT 0"),
