@@ -63,17 +63,22 @@ def verify_otp_hash(otp: str, hashed: str) -> bool:
     return hash_otp(otp) == hashed
 
 def send_otp_email(email: str, otp: str, purpose: str):
+    """Send OTP email. Raises RuntimeError if SMTP not configured or send fails."""
     if not SMTP_USER or not SMTP_PASS:
-        logger.warning(f"SMTP not configured. OTP for {email}: {otp} (DEV ONLY - remove in production)")
-        return
+        logger.error("SMTP_FATAL: SMTP_USER or SMTP_PASS not set. Cannot send OTP to %s", email)
+        raise RuntimeError("Email service not configured. Set SMTP_USER and SMTP_PASS environment variables.")
     
     subject = "Your Verification Code" if purpose == "signup" else "Password Reset Code"
     body = f"""
-    <h2>{subject}</h2>
-    <p>Your verification code is:</p>
-    <h1 style="color: #3b82f6; letter-spacing: 4px;">{otp}</h1>
-    <p>This code expires in {OTP_EXPIRY_MINUTES} minutes.</p>
-    <p>If you didn't request this, please ignore this email.</p>
+    <html><body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding: 20px;">
+    <div style="max-width: 400px; margin: 0 auto; background: #f8fafc; border-radius: 12px; padding: 32px; border: 1px solid #e2e8f0;">
+        <h2 style="color: #1e293b; margin-top: 0;">{subject}</h2>
+        <p style="color: #475569;">Your verification code is:</p>
+        <h1 style="color: #3b82f6; letter-spacing: 8px; text-align: center; font-size: 2rem; margin: 24px 0;">{otp}</h1>
+        <p style="color: #64748b; font-size: 0.875rem;">This code expires in {OTP_EXPIRY_MINUTES} minutes.</p>
+        <p style="color: #94a3b8; font-size: 0.75rem;">If you didn't request this, please ignore this email.</p>
+    </div>
+    </body></html>
     """
     try:
         msg = MIMEMultipart("alternative")
@@ -82,12 +87,21 @@ def send_otp_email(email: str, otp: str, purpose: str):
         msg["To"] = email
         msg.attach(MIMEText(body, "html"))
         with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
+            server.ehlo()
             server.starttls()
+            server.ehlo()
             server.login(SMTP_USER, SMTP_PASS)
             server.sendmail(SMTP_USER, email, msg.as_string())
-        logger.info(f"OTP email sent to {email}")
+        logger.info("SMTP_OK: OTP email sent to %s", email)
+    except smtplib.SMTPAuthenticationError as e:
+        logger.error("SMTP_AUTH_FAIL: %s", str(e))
+        raise RuntimeError("Email authentication failed. Check SMTP_USER and SMTP_PASS.")
+    except smtplib.SMTPException as e:
+        logger.error("SMTP_ERROR: %s", str(e))
+        raise RuntimeError(f"Email delivery failed: {str(e)}")
     except Exception as e:
-        logger.error(f"Failed to send OTP email: {str(e)}")
+        logger.error("SMTP_UNEXPECTED: %s", str(e))
+        raise RuntimeError(f"Email service error: {str(e)}")
 
 def _create_user_tokens(user, db: Session):
     token_data = {
@@ -151,6 +165,9 @@ def signup_initiate(payload: SignupInitiate, db: Session = Depends(get_db)):
         return {"message": "If this email is available, a verification code has been sent."}
     except HTTPException:
         raise
+    except RuntimeError as e:
+        logger.error("SIGNUP_INITIATE_SMTP: %s", str(e))
+        raise HTTPException(status_code=503, detail=str(e))
     except Exception as e:
         logger.error("SIGNUP_INITIATE_ERROR: %s", str(e), exc_info=True)
         raise HTTPException(status_code=500, detail="Internal auth error")
@@ -279,6 +296,9 @@ def forgot_initiate(payload: ForgotInitiate, db: Session = Depends(get_db)):
         return {"message": "If an account exists, a reset code has been sent."}
     except HTTPException:
         raise
+    except RuntimeError as e:
+        logger.error("FORGOT_INITIATE_SMTP: %s", str(e))
+        raise HTTPException(status_code=503, detail=str(e))
     except Exception as e:
         logger.error("FORGOT_INITIATE_ERROR: %s", str(e), exc_info=True)
         raise HTTPException(status_code=500, detail="Internal auth error")
