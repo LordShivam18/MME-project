@@ -362,58 +362,93 @@ def forgot_verify(payload: ForgotVerify, db: Session = Depends(get_db)):
 # ============================================================
 @router.post("/auth/google")
 def google_auth(payload: GoogleAuthPayload, db: Session = Depends(get_db)):
-    """Verify Google ID token and login/signup user."""
+    """Verify Google ID token, login or create user with smart account merge."""
     try:
-        from google.oauth2 import id_token
-        from google.auth.transport import requests as google_requests
+        # --- Step 1: Verify Google token ---
+        if not GOOGLE_CLIENT_ID:
+            logger.error("GOOGLE_AUTH: GOOGLE_CLIENT_ID not set")
+            raise HTTPException(status_code=503, detail="Google login not configured on this server")
         
-        idinfo = id_token.verify_oauth2_token(
-            payload.id_token,
-            google_requests.Request(),
-            GOOGLE_CLIENT_ID
-        )
+        try:
+            from google.oauth2 import id_token
+            from google.auth.transport import requests as google_requests
+        except ImportError:
+            logger.error("GOOGLE_AUTH: google-auth package not installed")
+            raise HTTPException(status_code=503, detail="Google auth not available on this server")
+        
+        try:
+            idinfo = id_token.verify_oauth2_token(
+                payload.id_token,
+                google_requests.Request(),
+                GOOGLE_CLIENT_ID
+            )
+        except ValueError as e:
+            logger.warning("GOOGLE_AUTH: invalid token - %s", str(e))
+            raise HTTPException(status_code=400, detail="Invalid or expired Google token")
         
         email = idinfo.get("email")
         name = idinfo.get("name", "")
+        picture = idinfo.get("picture", "")
         
         if not email:
-            raise HTTPException(status_code=400, detail="Invalid Google token")
+            raise HTTPException(status_code=400, detail="Google account has no email")
         
-    except ImportError:
-        logger.warning("google-auth not installed. Using dev fallback.")
-        raise HTTPException(status_code=501, detail="Google auth not configured on this server")
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid Google token")
-    
-    # Check if user exists
-    user = db.query(models.User).filter(models.User.email == email).first()
-    
-    if not user:
-        # Create user + org
-        org = models.Organization(name=f"{name or email.split('@')[0]}'s Organization")
-        db.add(org)
-        db.flush()
+        logger.info("GOOGLE_AUTH: verified token for %s", email)
         
-        user = models.User(
-            email=email,
-            username=email.split("@")[0],
-            hashed_password=pwd_context.hash(secrets.token_urlsafe(32)),  # Random password for OAuth users
-            organization_id=org.id,
-            role="admin"
-        )
-        db.add(user)
+        # --- Step 2: Smart account merge ---
+        user = db.query(models.User).filter(models.User.email == email).first()
         
-        sub = models.Subscription(organization_id=org.id, plan="free", status="active")
-        db.add(sub)
+        if user:
+            # Existing user — merge Google profile data if missing
+            updated = False
+            if name and not user.full_name:
+                user.full_name = name
+                updated = True
+            if picture and not user.avatar_url:
+                user.avatar_url = picture
+                updated = True
+            if not user.username:
+                user.username = email.split("@")[0]
+                updated = True
+            if updated:
+                db.commit()
+            logger.info("GOOGLE_AUTH: existing user login + merge (id=%s)", user.id)
+        else:
+            # New user — create org + user + subscription
+            org = models.Organization(name=f"{name or email.split('@')[0]}'s Organization")
+            db.add(org)
+            db.flush()
+            
+            user = models.User(
+                email=email,
+                username=email.split("@")[0],
+                full_name=name or None,
+                avatar_url=picture or None,
+                hashed_password=None,  # OAuth-only user, no password
+                organization_id=org.id,
+                role="admin"
+            )
+            db.add(user)
+            
+            sub = models.Subscription(organization_id=org.id, plan="free", status="active")
+            db.add(sub)
+            
+            db.commit()
+            db.refresh(user)
+            logger.info("GOOGLE_AUTH: new user created id=%s, org=%s", user.id, org.id)
         
-        db.commit()
-        db.refresh(user)
-        logger.info(f"Google OAuth: new user created for {email}")
-    
-    access_token, refresh_token = _create_user_tokens(user, db)
-    
-    return {
-        "access_token": access_token,
-        "refresh_token": refresh_token,
-        "token_type": "bearer"
-    }
+        # --- Step 3: Generate tokens ---
+        access_token, refresh_token = _create_user_tokens(user, db)
+        
+        logger.info("GOOGLE_AUTH: tokens created for %s", email)
+        
+        return {
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+            "token_type": "bearer"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("GOOGLE_AUTH_ERROR: %s", str(e), exc_info=True)
+        raise HTTPException(status_code=500, detail="Google login failed")

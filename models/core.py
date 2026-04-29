@@ -29,7 +29,9 @@ class User(Base):
     id = Column(Integer, primary_key=True, index=True)
     email = Column(String, unique=True, index=True, nullable=False)
     username = Column(String, unique=True, index=True, nullable=True)
-    hashed_password = Column(String, nullable=False)
+    full_name = Column(String, nullable=True)
+    avatar_url = Column(String, nullable=True)
+    hashed_password = Column(String, nullable=True)  # nullable for OAuth-only users
     hashed_refresh_token = Column(String, nullable=True)
     organization_id = Column(Integer, ForeignKey("organizations.id"), index=True, nullable=True)
     role = Column(String, default="admin", nullable=False, server_default="admin")

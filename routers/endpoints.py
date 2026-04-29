@@ -232,6 +232,10 @@ def login(request: Request, background_tasks: BackgroundTasks, form_data: OAuth2
             logger.warning("USER_DELETED: True (id=%s)", user.id)
             raise HTTPException(status_code=401, detail="Account has been deactivated")
         
+        if not user.hashed_password:
+            logger.warning("LOGIN: OAuth-only user tried password login (id=%s)", user.id)
+            raise HTTPException(status_code=401, detail="This account uses Google login. Please sign in with Google.")
+        
         password_match = pwd_context.verify(form_data.password, user.hashed_password)
         logger.info("PASSWORD_MATCH: %s", password_match)
         
