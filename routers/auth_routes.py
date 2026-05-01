@@ -49,7 +49,7 @@ class ForgotVerify(BaseModel):
     new_password: str = Field(..., min_length=8)
 
 class GoogleAuthPayload(BaseModel):
-    id_token: str
+    access_token: str
 
 
 # --- Helpers ---
@@ -362,38 +362,39 @@ def forgot_verify(payload: ForgotVerify, db: Session = Depends(get_db)):
 # ============================================================
 @router.post("/auth/google")
 def google_auth(payload: GoogleAuthPayload, db: Session = Depends(get_db)):
-    """Verify Google ID token, login or create user with smart account merge."""
+    """Verify Google access_token via userinfo API, login or create user with smart account merge."""
     try:
-        # --- Step 1: Verify Google token ---
-        if not GOOGLE_CLIENT_ID:
-            logger.error("GOOGLE_AUTH: GOOGLE_CLIENT_ID not set")
-            raise HTTPException(status_code=503, detail="Google login not configured on this server")
+        import urllib.request
+        import json as json_lib
         
+        # --- Step 1: Call Google userinfo API to verify access_token ---
+        logger.info("GOOGLE_AUTH: verifying access_token via userinfo API")
+        
+        req = urllib.request.Request(
+            "https://www.googleapis.com/oauth2/v3/userinfo",
+            headers={"Authorization": f"Bearer {payload.access_token}"}
+        )
         try:
-            from google.oauth2 import id_token
-            from google.auth.transport import requests as google_requests
-        except ImportError:
-            logger.error("GOOGLE_AUTH: google-auth package not installed")
-            raise HTTPException(status_code=503, detail="Google auth not available on this server")
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                userinfo = json_lib.loads(resp.read().decode())
+        except urllib.error.HTTPError as e:
+            logger.warning("GOOGLE_AUTH: userinfo API returned %s", e.code)
+            raise HTTPException(status_code=401, detail="Invalid or expired Google token")
+        except Exception as e:
+            logger.error("GOOGLE_AUTH: userinfo API call failed - %s", str(e))
+            raise HTTPException(status_code=502, detail="Could not verify Google token")
         
-        try:
-            idinfo = id_token.verify_oauth2_token(
-                payload.id_token,
-                google_requests.Request(),
-                GOOGLE_CLIENT_ID
-            )
-        except ValueError as e:
-            logger.warning("GOOGLE_AUTH: invalid token - %s", str(e))
-            raise HTTPException(status_code=400, detail="Invalid or expired Google token")
-        
-        email = idinfo.get("email")
-        name = idinfo.get("name", "")
-        picture = idinfo.get("picture", "")
+        email = userinfo.get("email")
+        name = userinfo.get("name", "")
+        picture = userinfo.get("picture", "")
         
         if not email:
             raise HTTPException(status_code=400, detail="Google account has no email")
         
-        logger.info("GOOGLE_AUTH: verified token for %s", email)
+        if not userinfo.get("email_verified", False):
+            raise HTTPException(status_code=400, detail="Google email not verified")
+        
+        logger.info("GOOGLE_AUTH: verified user %s", email)
         
         # --- Step 2: Smart account merge ---
         user = db.query(models.User).filter(models.User.email == email).first()

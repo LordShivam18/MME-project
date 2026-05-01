@@ -12,47 +12,55 @@ export default function Login({ onLogin }) {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const googleInitialized = useRef(false);
+  const tokenClientRef = useRef(null);
+  const googleReady = useRef(false);
 
-  // --- GOOGLE SDK: Initialize ONCE on mount ---
+  // --- GOOGLE OAuth2 Token Client: Initialize ONCE on mount ---
   useEffect(() => {
     const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
     if (!clientId) return;
 
-    const initGoogle = () => {
-      if (!window.google || googleInitialized.current) return;
+    const initTokenClient = () => {
+      if (!window.google?.accounts?.oauth2 || googleReady.current) return;
       try {
-        window.google.accounts.id.initialize({
+        tokenClientRef.current = window.google.accounts.oauth2.initTokenClient({
           client_id: clientId,
-          callback: async (response) => {
+          scope: 'email profile openid',
+          callback: async (tokenResponse) => {
+            if (tokenResponse.error) {
+              console.error('Google OAuth error:', tokenResponse.error);
+              setError('Google login cancelled or failed');
+              return;
+            }
             try {
-              const res = await axiosClient.post('/api/v1/auth/google', { id_token: response.credential });
+              const res = await axiosClient.post('/api/v1/auth/google', {
+                access_token: tokenResponse.access_token
+              });
               localStorage.setItem('access_token', res.data.access_token);
               localStorage.setItem('refresh_token', res.data.refresh_token);
               window.location.href = '/dashboard';
             } catch (err) {
+              console.error('Google backend auth error:', err.response?.data);
               setError(err.response?.data?.detail || 'Google login failed');
             }
-          }
+          },
         });
-        googleInitialized.current = true;
-        console.log('Google SDK initialized successfully');
+        googleReady.current = true;
+        console.log('Google OAuth2 token client initialized');
       } catch (err) {
-        console.error('Google SDK init error:', err);
+        console.error('Google token client init error:', err);
       }
     };
 
-    // SDK might already be loaded, or wait for it
-    if (window.google) {
-      initGoogle();
+    if (window.google?.accounts?.oauth2) {
+      initTokenClient();
     } else {
       const checkInterval = setInterval(() => {
-        if (window.google) {
-          initGoogle();
+        if (window.google?.accounts?.oauth2) {
+          initTokenClient();
           clearInterval(checkInterval);
         }
       }, 200);
-      // Give up after 5 seconds
       setTimeout(() => clearInterval(checkInterval), 5000);
     }
   }, []);
@@ -170,32 +178,19 @@ export default function Login({ onLogin }) {
     }
   };
 
-  // --- GOOGLE LOGIN (prompt only — SDK already initialized in useEffect) ---
+  // --- GOOGLE LOGIN (OAuth2 popup — always opens a real window) ---
   const handleGoogleLogin = () => {
     setError('');
-    if (!window.google) {
+    if (!window.google?.accounts?.oauth2) {
       setError('Google Sign-In not available. Please refresh the page.');
-      console.error('Google SDK not loaded');
+      console.error('Google OAuth2 SDK not loaded');
       return;
     }
-    if (!googleInitialized.current) {
+    if (!tokenClientRef.current) {
       setError('Google Sign-In is still loading. Please try again.');
       return;
     }
-    try {
-      window.google.accounts.id.prompt((notification) => {
-        if (notification.isNotDisplayed()) {
-          console.warn('Google prompt not displayed:', notification.getNotDisplayedReason());
-          // Fallback: render a button-based flow
-          setError('Google popup was blocked. Please allow popups or try again.');
-        } else if (notification.isSkippedMoment()) {
-          console.warn('Google prompt skipped:', notification.getSkippedReason());
-        }
-      });
-    } catch (err) {
-      console.error('Google prompt error:', err);
-      setError('Google login unavailable');
-    }
+    tokenClientRef.current.requestAccessToken();
   };
 
   return (
