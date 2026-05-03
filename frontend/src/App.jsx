@@ -13,11 +13,15 @@ import ProfitDashboard from './pages/ProfitDashboard';
 import Settings from './pages/Settings';
 import AdminDashboard from './pages/AdminDashboard';
 import Chat from './pages/Chat';
+import CompleteProfile from './pages/CompleteProfile';
+import Marketplace from './pages/Marketplace';
+import OrderTracking from './pages/OrderTracking';
 import Layout from './components/Layout';
 
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isInitializing, setIsInitializing] = useState(true);
+  const [kycComplete, setKycComplete] = useState(true); // default true to avoid flash
 
   // ACTIVE TOKEN VALIDATION
   useEffect(() => {
@@ -30,8 +34,9 @@ function App() {
       try {
         // Ping explicit backend Auth route to cryptographically verify token
         // If access_token is expired, the axiosClient interceptor will silently refresh it
-        await axiosClient.get('/api/v1/me');
+        const res = await axiosClient.get('/api/v1/me');
         setIsAuthenticated(true);
+        setKycComplete(res.data?.user?.kyc_complete ?? true);
       } catch (error) {
         // If both access and refresh fail, interceptor already wiped tokens
         localStorage.removeItem('access_token');
@@ -50,19 +55,34 @@ function App() {
 
   // Route wrapper protection
   const ProtectedRoute = ({ children }) => {
-    return isAuthenticated ? children : <Navigate to="/login" replace />;
+    if (!isAuthenticated) return <Navigate to="/login" replace />;
+    if (!kycComplete) return <Navigate to="/complete-profile" replace />;
+    return children;
   };
 
   // Layout-wrapped protected route
   const ProtectedWithLayout = ({ children }) => {
-    return isAuthenticated ? <Layout>{children}</Layout> : <Navigate to="/login" replace />;
+    if (!isAuthenticated) return <Navigate to="/login" replace />;
+    if (!kycComplete) return <Navigate to="/complete-profile" replace />;
+    return <Layout>{children}</Layout>;
   };
 
   return (
     <Router>
       <Routes>
-        <Route path="/login" element={<Login onLogin={() => setIsAuthenticated(true)} />} />
+        <Route path="/login" element={<Login onLogin={async () => {
+          setIsAuthenticated(true);
+          try {
+            const res = await axiosClient.get('/api/v1/me');
+            setKycComplete(res.data?.user?.kyc_complete ?? true);
+          } catch { setKycComplete(true); }
+        }} />} />
         
+        {/* Complete Profile - no layout, requires auth but not KYC */}
+        <Route path="/complete-profile" element={
+          isAuthenticated ? <CompleteProfile /> : <Navigate to="/login" replace />
+        } />
+
         {/* Routes with sidebar layout */}
         <Route path="/dashboard" element={
           <ProtectedWithLayout>
@@ -103,6 +123,18 @@ function App() {
         <Route path="/chat" element={
           <ProtectedWithLayout>
             <Chat />
+          </ProtectedWithLayout>
+        } />
+
+        <Route path="/marketplace" element={
+          <ProtectedWithLayout>
+            <Marketplace />
+          </ProtectedWithLayout>
+        } />
+
+        <Route path="/orders/:orderId" element={
+          <ProtectedWithLayout>
+            <OrderTracking />
           </ProtectedWithLayout>
         } />
 

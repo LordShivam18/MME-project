@@ -22,7 +22,7 @@ from sqlalchemy import func, desc
 from pydantic import BaseModel
 
 from database import get_db
-from models.core import Product, Inventory
+from models.core import Product, Inventory, Organization
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Public"])
@@ -227,3 +227,75 @@ def get_public_product(
         raise HTTPException(status_code=404, detail="Product not found")
 
     return _build_row_response(row)
+
+
+# ======================== PUBLIC STORE DIRECTORY ========================
+
+class PublicStoreResponse(BaseModel):
+    id: int
+    name: str = ""
+    category: Optional[str] = None
+    address: Optional[str] = None
+    phone: Optional[str] = None
+    product_count: int = 0
+
+    class Config:
+        from_attributes = True
+
+
+@router.get("/public/stores", response_model=List[PublicStoreResponse])
+def list_public_stores(
+    category: Optional[str] = None,
+    search: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    """
+    Public store directory. Returns only organizations where is_public=TRUE and has products.
+    No auth required.
+    """
+    from sqlalchemy import func as sqlfunc
+
+    # Subquery: count products per org
+    product_count_sq = (
+        db.query(
+            Product.shop_id,
+            sqlfunc.count(Product.id).label("product_count")
+        )
+        .filter(Product.is_deleted == False)
+        .group_by(Product.shop_id)
+        .subquery()
+    )
+
+    query = (
+        db.query(
+            Organization.id,
+            Organization.name,
+            Organization.category,
+            Organization.address,
+            Organization.phone,
+            sqlfunc.coalesce(product_count_sq.c.product_count, 0).label("product_count"),
+        )
+        .outerjoin(product_count_sq, Organization.id == product_count_sq.c.shop_id)
+        .filter(
+            Organization.is_public == True,
+            Organization.is_deleted == False,
+        )
+    )
+
+    if category:
+        query = query.filter(Organization.category.ilike(f"%{category}%"))
+    if search:
+        query = query.filter(Organization.name.ilike(f"%{search}%"))
+
+    # Only stores with at least 1 product
+    query = query.having(sqlfunc.coalesce(product_count_sq.c.product_count, 0) > 0)
+    rows = query.order_by(Organization.name.asc()).limit(100).all()
+
+    return [
+        PublicStoreResponse(
+            id=r.id, name=r.name or "",
+            category=r.category, address=r.address, phone=r.phone,
+            product_count=r.product_count,
+        )
+        for r in rows
+    ]

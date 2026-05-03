@@ -351,9 +351,19 @@ def validate_token(request: Request, db: Session = Depends(get_db), current_user
     org_id = _org_id(current_user)
     org = db.query(models.Organization).filter(models.Organization.id == org_id).first()
     
+    # Fetch full user for extended fields
+    user_id = current_user.get("user_id")
+    db_user = db.query(models.User).filter(models.User.id == user_id).first() if user_id else None
+    
+    user_data = dict(current_user)
+    if db_user:
+        user_data["business_type"] = db_user.business_type or "customer"
+        user_data["kyc_complete"] = db_user.kyc_complete or False
+        user_data["full_name"] = db_user.full_name
+    
     return {
         "status": "ok", 
-        "user": current_user,
+        "user": user_data,
         "organization": {
             "id": org.id,
             "name": org.name,
@@ -1424,3 +1434,49 @@ def get_admin_stats(db: Session = Depends(get_db), current_admin: dict = Depends
     except Exception as e:
         logger.error(f"Failed to fetch admin stats: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to fetch platform statistics")
+
+
+# ============================================================
+# ADMIN KYC ACCESS
+# ============================================================
+@router.get("/admin/kyc")
+@limiter.limit("20/minute")
+def admin_get_kyc(request: Request, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    """Admin-only: view all KYC records."""
+    require_role(current_user, ["admin"])
+    
+    kyc_records = db.query(models.UserKYC).order_by(models.UserKYC.created_at.desc()).all()
+    return [
+        {
+            "id": k.id,
+            "user_id": k.user_id,
+            "full_name": k.full_name,
+            "age": k.age,
+            "phone": k.phone,
+            "email": k.email,
+            "address": k.address,
+            "business_type": k.business_type,
+            "created_at": k.created_at,
+        }
+        for k in kyc_records
+    ]
+
+
+@router.get("/me/kyc")
+@limiter.limit("30/minute")
+def get_my_kyc(request: Request, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    """Get own KYC data."""
+    user_id = current_user.get("user_id")
+    kyc = db.query(models.UserKYC).filter(models.UserKYC.user_id == user_id).first()
+    if not kyc:
+        return {"kyc": None}
+    return {
+        "kyc": {
+            "full_name": kyc.full_name,
+            "age": kyc.age,
+            "phone": kyc.phone,
+            "email": kyc.email,
+            "address": kyc.address,
+            "business_type": kyc.business_type,
+        }
+    }

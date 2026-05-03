@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 
 from database import get_db
 from models import core as models
-from auth import pwd_context, create_access_token, create_refresh_token
+from auth import pwd_context, create_access_token, create_refresh_token, get_current_user
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -479,3 +479,73 @@ def google_auth(payload: GoogleAuthPayload, db: Session = Depends(get_db)):
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Google login failed: {str(e)}")
+
+
+# ============================================================
+# COMPLETE PROFILE (KYC + ROLE)
+# ============================================================
+class CompleteProfilePayload(BaseModel):
+    business_type: str = Field(..., pattern="^(supplier|wholesaler|retailer|customer|other)$")
+    custom_role: Optional[str] = None
+    full_name: str = Field(..., min_length=2, max_length=200)
+    age: Optional[int] = Field(None, ge=13, le=120)
+    phone: Optional[str] = None
+    address: Optional[str] = None
+
+
+@router.post("/auth/complete-profile")
+def complete_profile(payload: CompleteProfilePayload, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    """Step after signup: set business type + KYC data."""
+    try:
+        user_id = current_user.get("user_id")
+        user = db.query(models.User).filter(models.User.id == user_id).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        if user.kyc_complete:
+            return {"message": "Profile already completed", "kyc_complete": True}
+
+        # Determine business type
+        btype = payload.custom_role if payload.business_type == "other" and payload.custom_role else payload.business_type
+
+        # Save KYC
+        existing_kyc = db.query(models.UserKYC).filter(models.UserKYC.user_id == user_id).first()
+        if existing_kyc:
+            existing_kyc.full_name = payload.full_name
+            existing_kyc.age = payload.age
+            existing_kyc.phone = payload.phone
+            existing_kyc.email = user.email
+            existing_kyc.address = payload.address
+            existing_kyc.business_type = btype
+            existing_kyc.updated_at = datetime.utcnow()
+        else:
+            kyc = models.UserKYC(
+                user_id=user_id,
+                full_name=payload.full_name,
+                age=payload.age,
+                phone=payload.phone,
+                email=user.email,
+                address=payload.address,
+                business_type=btype,
+            )
+            db.add(kyc)
+
+        # Update user
+        user.business_type = btype
+        user.kyc_complete = True
+        user.full_name = payload.full_name
+        user.updated_at = datetime.utcnow()
+
+        db.commit()
+        logger.info("PROFILE_COMPLETE: user=%d business_type=%s", user_id, btype)
+
+        return {
+            "message": "Profile completed successfully",
+            "kyc_complete": True,
+            "business_type": btype,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("COMPLETE_PROFILE_ERROR: %s", str(e), exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to complete profile")

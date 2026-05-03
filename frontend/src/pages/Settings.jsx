@@ -6,20 +6,25 @@ export default function Settings() {
   const [user, setUser] = useState(null);
   const [org, setOrg] = useState(null);
   const [aiMode, setAiMode] = useState("balanced");
+  const [kyc, setKyc] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
 
   useEffect(() => {
-    const fetchMe = async () => {
+    const fetchData = async () => {
       try {
-        const res = await axiosClient.get('/api/v1/me');
-        setUser(res.data?.user || null);
-        setOrg(res.data?.organization || null);
-        if (res.data?.organization?.ai_decision_mode) {
-          setAiMode(res.data.organization.ai_decision_mode);
+        const [meRes, kycRes] = await Promise.all([
+          axiosClient.get('/api/v1/me'),
+          axiosClient.get('/api/v1/me/kyc'),
+        ]);
+        setUser(meRes.data?.user || null);
+        setOrg(meRes.data?.organization || null);
+        if (meRes.data?.organization?.ai_decision_mode) {
+          setAiMode(meRes.data.organization.ai_decision_mode);
         }
+        setKyc(kycRes.data?.kyc || null);
       } catch (err) {
         console.error(err);
         setError("Unable to load settings.");
@@ -27,7 +32,7 @@ export default function Settings() {
         setIsLoading(false);
       }
     };
-    fetchMe();
+    fetchData();
   }, []);
 
   const handleSave = async () => {
@@ -52,9 +57,77 @@ export default function Settings() {
     );
   }
 
+  const BUSINESS_LABELS = {
+    supplier: '🏭 Supplier',
+    wholesaler: '📦 Wholesaler',
+    retailer: '🏪 Retailer',
+    customer: '🛒 Customer',
+  };
+
   return (
     <div style={{ fontFamily: '"Inter", sans-serif', maxWidth: '1200px', margin: '0 auto', padding: '1rem' }}>
       
+      {/* Profile Section */}
+      <div style={{ padding: '2rem', marginTop: '1rem', backgroundColor: '#f8fafc', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
+        <h2 style={{ margin: '0 0 1.5rem 0', color: '#0f172a' }}>Profile</h2>
+        
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
+          <div style={cardStyle}>
+            <div style={{ fontSize: '0.8rem', color: '#94a3b8', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Account</div>
+            <div style={{ marginTop: '1rem' }}>
+              <div style={fieldStyle}>
+                <span style={fieldLabel}>Email</span>
+                <span style={fieldValue}>{user?.sub || user?.email || '—'}</span>
+              </div>
+              <div style={fieldStyle}>
+                <span style={fieldLabel}>Full Name</span>
+                <span style={fieldValue}>{user?.full_name || kyc?.full_name || '—'}</span>
+              </div>
+              <div style={fieldStyle}>
+                <span style={fieldLabel}>Role</span>
+                <span style={fieldValue}>{user?.role || '—'}</span>
+              </div>
+              <div style={fieldStyle}>
+                <span style={fieldLabel}>Business Type</span>
+                <span style={{ ...fieldValue, fontWeight: 600 }}>
+                  {BUSINESS_LABELS[user?.business_type] || user?.business_type || '—'}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div style={cardStyle}>
+            <div style={{ fontSize: '0.8rem', color: '#94a3b8', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>KYC Details</div>
+            {kyc ? (
+              <div style={{ marginTop: '1rem' }}>
+                <div style={fieldStyle}>
+                  <span style={fieldLabel}>Phone</span>
+                  <span style={fieldValue}>{kyc.phone || '—'}</span>
+                </div>
+                <div style={fieldStyle}>
+                  <span style={fieldLabel}>Age</span>
+                  <span style={fieldValue}>{kyc.age || '—'}</span>
+                </div>
+                <div style={fieldStyle}>
+                  <span style={fieldLabel}>Address</span>
+                  <span style={fieldValue}>{kyc.address || '—'}</span>
+                </div>
+                <div style={{ marginTop: '0.75rem' }}>
+                  <span style={{ padding: '3px 10px', backgroundColor: '#d1fae5', color: '#065f46', borderRadius: '6px', fontSize: '0.75rem', fontWeight: 600 }}>
+                    ✓ KYC Verified
+                  </span>
+                </div>
+              </div>
+            ) : (
+              <div style={{ marginTop: '1rem', color: '#94a3b8', fontSize: '0.9rem' }}>
+                No KYC data on file.
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* AI Settings Section */}
       <div style={{ padding: '2rem', marginTop: '2rem', backgroundColor: '#f8fafc', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
         <h2 style={{ margin: '0 0 1.5rem 0', color: '#0f172a' }}>Organization Settings</h2>
         
@@ -108,3 +181,27 @@ export default function Settings() {
     </div>
   );
 }
+
+const cardStyle = {
+  backgroundColor: '#fff',
+  borderRadius: '10px',
+  padding: '1.5rem',
+  border: '1px solid #e2e8f0',
+};
+
+const fieldStyle = {
+  display: 'flex',
+  justifyContent: 'space-between',
+  padding: '0.6rem 0',
+  borderBottom: '1px solid #f1f5f9',
+};
+
+const fieldLabel = {
+  fontSize: '0.875rem',
+  color: '#64748b',
+};
+
+const fieldValue = {
+  fontSize: '0.875rem',
+  color: '#1e293b',
+};

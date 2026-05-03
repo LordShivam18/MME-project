@@ -10,6 +10,10 @@ class Organization(Base):
     name = Column(String, nullable=False)
     stripe_customer_id = Column(String, nullable=True, unique=True, index=True)
     ai_decision_mode = Column(String, default="balanced", nullable=False, server_default="balanced")
+    is_public = Column(Boolean, default=False, nullable=False, server_default="false")
+    category = Column(String, nullable=True)
+    address = Column(String, nullable=True)
+    phone = Column(String, nullable=True)
     is_deleted = Column(Boolean, default=False, nullable=False, server_default="false")
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -35,6 +39,8 @@ class User(Base):
     hashed_refresh_token = Column(String, nullable=True)
     organization_id = Column(Integer, ForeignKey("organizations.id"), index=True, nullable=True)
     role = Column(String, default="admin", nullable=False, server_default="admin")
+    business_type = Column(String, default="customer", nullable=False, server_default="customer")
+    kyc_complete = Column(Boolean, default=False, nullable=False, server_default="false")
     is_platform_admin = Column(Boolean, default=False, nullable=False, server_default="false")
     token_version = Column(Integer, default=0, nullable=False, server_default="0")
     is_deleted = Column(Boolean, default=False, nullable=False, server_default="false")
@@ -418,3 +424,20 @@ class IdempotencyKey(Base):
     __table_args__ = (
         UniqueConstraint('user_id', 'key', name='uix_user_idempotency_key'),
     )
+
+
+class UserKYC(Base):
+    __tablename__ = "user_kyc"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), unique=True, nullable=False, index=True)
+    full_name = Column(String, nullable=False)
+    age = Column(Integer, nullable=True)
+    phone = Column(String, nullable=True)
+    email = Column(String, nullable=False)
+    address = Column(String, nullable=True)
+    business_type = Column(String, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Relationships
+    user = relationship("User")

@@ -309,7 +309,8 @@ def update_order_status(order_id: int, payload: schemas.OrderUpdateStatus, db: S
         
     ALLOWED_TRANSITIONS = {
         "pending": ["confirmed", "cancelled"],
-        "confirmed": ["shipped", "cancelled"],
+        "confirmed": ["packed", "shipped", "cancelled"],
+        "packed": ["shipped", "cancelled"],
         "shipped": ["delivered", "returned"],
         "delivered": ["returned"],
         "returned": [],
@@ -352,3 +353,42 @@ def update_order_status(order_id: int, payload: schemas.OrderUpdateStatus, db: S
         db.commit()
     
     return order
+
+
+# ============================================================
+# ORDER TIMELINE
+# ============================================================
+@router.get("/orders/{order_id}/timeline")
+def get_order_timeline(order_id: int, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    """Get full status timeline for an order."""
+    org_id = _org_id(current_user)
+    order = db.query(models.Order).filter(
+        models.Order.id == order_id,
+        models.Order.organization_id == org_id,
+        models.Order.is_deleted == False
+    ).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+
+    history = (
+        db.query(models.OrderStatusHistory)
+        .filter(models.OrderStatusHistory.order_id == order_id)
+        .order_by(models.OrderStatusHistory.changed_at.asc())
+        .all()
+    )
+
+    timeline = []
+    # Add initial "placed" event from order creation
+    timeline.append({"step": "placed", "time": order.created_at.isoformat() if order.created_at else None})
+    
+    for h in history:
+        timeline.append({
+            "step": h.to_status,
+            "time": h.changed_at.isoformat() if h.changed_at else None,
+        })
+
+    return {
+        "order_id": order.id,
+        "status": order.status,
+        "timeline": timeline,
+    }

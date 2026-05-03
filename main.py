@@ -219,6 +219,28 @@ async def lifespan(app: FastAPI):
             conn.execute(text("ALTER TABLE inventory ADD COLUMN IF NOT EXISTS reserved_quantity INTEGER DEFAULT 0"))
             conn.execute(text("ALTER TABLE price_requests ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP"))
             conn.execute(text("ALTER TABLE price_requests ADD COLUMN IF NOT EXISTS negotiation_delta FLOAT"))
+            # --- Role + KYC + Marketplace ---
+            conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS business_type VARCHAR DEFAULT 'customer'"))
+            conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS kyc_complete BOOLEAN DEFAULT FALSE"))
+            conn.execute(text("ALTER TABLE organizations ADD COLUMN IF NOT EXISTS is_public BOOLEAN DEFAULT FALSE"))
+            conn.execute(text("ALTER TABLE organizations ADD COLUMN IF NOT EXISTS category VARCHAR"))
+            conn.execute(text("ALTER TABLE organizations ADD COLUMN IF NOT EXISTS address VARCHAR"))
+            conn.execute(text("ALTER TABLE organizations ADD COLUMN IF NOT EXISTS phone VARCHAR"))
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS user_kyc (
+                    id SERIAL PRIMARY KEY,
+                    user_id INTEGER NOT NULL UNIQUE REFERENCES users(id),
+                    full_name VARCHAR NOT NULL,
+                    age INTEGER,
+                    phone VARCHAR,
+                    email VARCHAR NOT NULL,
+                    address VARCHAR,
+                    business_type VARCHAR NOT NULL,
+                    created_at TIMESTAMP DEFAULT NOW(),
+                    updated_at TIMESTAMP DEFAULT NOW()
+                )
+            """))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_user_kyc_user ON user_kyc (user_id)"))
             conn.commit()
         logger.info("Migration check complete: all columns, indexes, and tables ensured")
     except Exception as e:
@@ -264,7 +286,9 @@ async def lifespan(app: FastAPI):
             new_user = User(
                 email="test@gmail.com",
                 hashed_password=hashed,
-                organization_id=default_org.id
+                organization_id=default_org.id,
+                kyc_complete=True,
+                business_type="retailer",
             )
 
             db.add(new_user)
@@ -278,6 +302,9 @@ async def lifespan(app: FastAPI):
             if not user.organization_id:
                 user.organization_id = default_org.id
                 logger.info("Assigned user to default org: id=%s", default_org.id)
+            # Ensure existing admin has KYC complete
+            user.kyc_complete = True
+            user.business_type = "retailer"
             db.commit()
 
         # Ensure admin fallback user exists (idempotent)

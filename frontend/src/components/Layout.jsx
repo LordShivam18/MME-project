@@ -10,6 +10,7 @@ const navItems = [
   { to: '/inventory',  icon: '🏭', label: 'Inventory' },
   { section: 'Business' },
   { to: '/contacts',   icon: '🤝', label: 'CRM & Orders' },
+  { to: '/marketplace', icon: '🏪', label: 'Marketplace' },
   { to: '/chat',       icon: '💬', label: 'Messages' },
   { to: '/profit',     icon: '💰', label: 'Profit Analytics' },
   { section: 'System' },
