@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import axiosClient from '../api/axiosClient';
 import PredictionWidget from '../components/PredictionWidget';
+import ProductPricingWidget from '../components/ProductPricingWidget';
 import { LoadingSpinner, ErrorState, EmptyState } from '../components/StateSpinners';
 import { formatCurrency } from '../utils';
 
@@ -114,6 +115,7 @@ export default function Inventory() {
               
               <div style={{ width: '350px' }}>
                  <PredictionWidget shopId={shopId} productId={item.product_id} onReorder={handleAddStock} />
+                 <ProductPricingWidget productId={item.product_id} productName={item.name} basePrice={item.selling_price} />
               </div>
             </div>
           );

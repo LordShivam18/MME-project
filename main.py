@@ -156,6 +156,36 @@ async def lifespan(app: FastAPI):
             # --- Performance indexes ---
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_pi_product_org ON product_insights (product_id, organization_id)"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_convos_org_contact ON conversations (organization_id, contact_id)"))
+            # --- Pricing Engine tables ---
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS pricing_tiers (
+                    id SERIAL PRIMARY KEY,
+                    product_id INTEGER NOT NULL REFERENCES products(id),
+                    shop_id INTEGER NOT NULL REFERENCES organizations(id),
+                    min_qty INTEGER NOT NULL,
+                    price_per_unit NUMERIC(10,2) NOT NULL,
+                    created_at TIMESTAMP DEFAULT NOW(),
+                    UNIQUE(product_id, min_qty)
+                )
+            """))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_pricing_tiers_product ON pricing_tiers (product_id, shop_id)"))
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS price_requests (
+                    id SERIAL PRIMARY KEY,
+                    user_id INTEGER NOT NULL REFERENCES users(id),
+                    shop_id INTEGER NOT NULL REFERENCES organizations(id),
+                    product_id INTEGER NOT NULL REFERENCES products(id),
+                    quantity INTEGER NOT NULL,
+                    requested_price NUMERIC(10,2) NOT NULL,
+                    approved_price NUMERIC(10,2),
+                    status VARCHAR NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','accepted','rejected')),
+                    admin_note VARCHAR,
+                    created_at TIMESTAMP DEFAULT NOW(),
+                    updated_at TIMESTAMP DEFAULT NOW()
+                )
+            """))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_price_requests_user_product ON price_requests (user_id, product_id)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_price_requests_shop_status ON price_requests (shop_id, status)"))
             conn.commit()
         logger.info("Migration check complete: all columns, indexes, and tables ensured")
     except Exception as e:
@@ -368,6 +398,10 @@ except Exception as e:
 from routers import public
 app.include_router(public.router, prefix="/api/v1")
 logger.info("✅ Public routes registered: /api/v1/public/*")
+
+from routers import pricing
+app.include_router(pricing.router, prefix="/api/v1")
+logger.info("✅ Pricing routes registered: /api/v1/pricing/*")
 
 # ---------------- HEALTH CHECK ----------------
 @app.get("/health")

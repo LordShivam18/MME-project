@@ -350,3 +350,50 @@ class OrderStatusHistory(Base):
     
     # Relationships
     order = relationship("Order")
+
+
+# ============================================================
+# PRICING ENGINE MODELS
+# ============================================================
+
+class PricingTier(Base):
+    __tablename__ = "pricing_tiers"
+    id = Column(Integer, primary_key=True, index=True)
+    product_id = Column(Integer, ForeignKey("products.id"), nullable=False, index=True)
+    shop_id = Column(Integer, ForeignKey("organizations.id"), nullable=False, index=True)
+    min_qty = Column(Integer, nullable=False)
+    price_per_unit = Column(Float, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    # Relationships
+    product = relationship("Product")
+    organization = relationship("Organization")
+
+    __table_args__ = (
+        UniqueConstraint('product_id', 'min_qty', name='uix_product_min_qty'),
+    )
+
+
+class PriceRequest(Base):
+    __tablename__ = "price_requests"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    shop_id = Column(Integer, ForeignKey("organizations.id"), nullable=False, index=True)
+    product_id = Column(Integer, ForeignKey("products.id"), nullable=False, index=True)
+    quantity = Column(Integer, nullable=False)
+    requested_price = Column(Float, nullable=False)
+    approved_price = Column(Float, nullable=True)
+    status = Column(String, default="pending", nullable=False, server_default="pending")
+    admin_note = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Relationships
+    user = relationship("User")
+    product = relationship("Product")
+    organization = relationship("Organization")
+
+    __table_args__ = (
+        CheckConstraint("status IN ('pending','accepted','rejected')", name='ck_price_request_status'),
+        Index('ix_price_requests_user_product', 'user_id', 'product_id'),
+    )
