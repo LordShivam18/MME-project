@@ -479,6 +479,8 @@ class SupportTicket(Base):
     priority = Column(String, default="medium", nullable=False) # low/medium/high
     created_at = Column(DateTime, default=datetime.utcnow)
     closed_at = Column(DateTime, nullable=True)
+    first_response_at = Column(DateTime, nullable=True)
+    resolved_at = Column(DateTime, nullable=True)
 
     # Relationships
     order = relationship("Order")
@@ -493,6 +495,7 @@ class TicketMessage(Base):
     ticket_id = Column(Integer, ForeignKey("support_tickets.id"), index=True, nullable=False)
     sender_id = Column(Integer, ForeignKey("users.id"), nullable=False) # User ID of whoever sent it
     message = Column(String, nullable=False)
+    attachment_url = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     ticket = relationship("SupportTicket", back_populates="messages")

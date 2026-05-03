@@ -272,6 +272,9 @@ async def lifespan(app: FastAPI):
             # --- Support Tickets ---
             conn.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id)"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_orders_user ON orders (user_id)"))
+            conn.execute(text("ALTER TABLE support_tickets ADD COLUMN IF NOT EXISTS first_response_at TIMESTAMP"))
+            conn.execute(text("ALTER TABLE support_tickets ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMP"))
+            conn.execute(text("ALTER TABLE ticket_messages ADD COLUMN IF NOT EXISTS attachment_url VARCHAR"))
             conn.commit()
         logger.info("Migration check complete: all columns, indexes, and tables ensured")
     except Exception as e:

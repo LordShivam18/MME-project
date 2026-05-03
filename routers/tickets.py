@@ -2,7 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
 from typing import List
-from datetime import datetime
+from datetime import datetime, timedelta
+import re
 
 import models.core as models
 from pydantic import BaseModel
@@ -37,6 +38,7 @@ class TicketMessageResponse(BaseModel):
     id: int
     sender_id: int
     message: str
+    attachment_url: str | None = None
     created_at: datetime
     class Config: from_attributes = True
 
@@ -50,10 +52,46 @@ class TicketResponse(BaseModel):
     priority: str
     created_at: datetime
     closed_at: datetime | None
+    first_response_at: datetime | None = None
+    resolved_at: datetime | None = None
     messages: List[TicketMessageResponse] = []
     events: List[TicketEventResponse] = []
     class Config: from_attributes = True
 
+
+# --- Helpers ---
+def auto_close_inactive_tickets(db: Session, ticket=None, tickets=None):
+    """Option A implementation: auto-close tickets inactive for 7 days during fetch"""
+    target_tickets = []
+    if ticket: target_tickets.append(ticket)
+    if tickets: target_tickets.extend(tickets)
+    
+    threshold = datetime.utcnow() - timedelta(days=7)
+    closed_any = False
+    
+    for t in target_tickets:
+        if t.status == "resolved": continue
+        
+        # Determine last activity
+        last_msg = max(t.messages, key=lambda m: m.created_at, default=None)
+        last_activity = last_msg.created_at if last_msg else t.created_at
+        
+        if last_activity < threshold:
+            t.status = "resolved"
+            t.closed_at = datetime.utcnow()
+            t.resolved_at = datetime.utcnow()
+            
+            event = models.TicketEvent(
+                ticket_id=t.id,
+                old_status=t.status,
+                new_status="resolved",
+                changed_by=t.organization.owner_id if hasattr(t.organization, 'owner_id') else 1 # System auto-close essentially
+            )
+            db.add(event)
+            closed_any = True
+            
+    if closed_any:
+        db.commit()
 
 # --- Endpoints ---
 
@@ -72,6 +110,15 @@ def create_ticket(payload: TicketCreate, db: Session = Depends(get_db), current_
 
     if not order:
         raise HTTPException(status_code=404, detail="Order not found or you don't have permission")
+
+    # Prevent duplicate active tickets
+    existing = db.query(models.SupportTicket).filter(
+        models.SupportTicket.order_id == payload.order_id,
+        models.SupportTicket.user_id == user_id,
+        models.SupportTicket.status != "resolved"
+    ).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="An active ticket already exists for this order")
 
     ticket = models.SupportTicket(
         user_id=user_id,
@@ -119,6 +166,7 @@ def get_tickets(db: Session = Depends(get_db), current_user: dict = Depends(get_
         # Seller sees org tickets
         tickets = db.query(models.SupportTicket).filter(models.SupportTicket.organization_id == org_id).order_by(models.SupportTicket.created_at.desc()).all()
     
+    auto_close_inactive_tickets(db, tickets=tickets)
     return tickets
 
 @router.get("/tickets/{ticket_id}", response_model=TicketResponse)
@@ -133,6 +181,8 @@ def get_ticket(ticket_id: int, db: Session = Depends(get_db), current_user: dict
 
     if not ticket:
         raise HTTPException(status_code=404, detail="Ticket not found")
+    
+    auto_close_inactive_tickets(db, ticket=ticket)
     return ticket
 
 @router.post("/tickets/{ticket_id}/message", response_model=TicketMessageResponse)
@@ -151,12 +201,24 @@ def add_ticket_message(ticket_id: int, payload: TicketMessageCreate, db: Session
     if ticket.status == "resolved":
         raise HTTPException(status_code=400, detail="Cannot add message to a resolved ticket")
 
+    if len(payload.message) > 2000:
+        raise HTTPException(status_code=400, detail="Message too long")
+
+    # Sanitize message
+    safe_message = re.sub(r'<[^>]*>', '', payload.message).strip()
+    if not safe_message:
+        raise HTTPException(status_code=400, detail="Message cannot be empty")
+
     msg = models.TicketMessage(
         ticket_id=ticket.id,
         sender_id=user_id,
-        message=payload.message
+        message=safe_message
     )
     db.add(msg)
+
+    # SLA Tracking: First response from seller
+    if user_id != ticket.user_id and not ticket.first_response_at:
+        ticket.first_response_at = datetime.utcnow()
 
     # Notify other party
     if user_id == ticket.user_id:
@@ -205,6 +267,7 @@ def update_ticket_status(ticket_id: int, payload: TicketStatusUpdate, db: Sessio
         ticket.status = payload.status
         if payload.status == "resolved":
             ticket.closed_at = datetime.utcnow()
+            ticket.resolved_at = datetime.utcnow()
         
         event = models.TicketEvent(
             ticket_id=ticket.id,
