@@ -72,6 +72,60 @@ def _compute_price_floor(product: models.Product) -> float:
     return normalize_price(max(cost, selling * 0.6))
 
 
+def _clamp_inventory(inv: models.Inventory):
+    """FIX 2: Ensure inventory never goes negative."""
+    inv.quantity_on_hand = max(0, inv.quantity_on_hand)
+    inv.reserved_quantity = max(0, inv.reserved_quantity)
+
+
+def _release_reservation(db: Session, price_req, org_id: int):
+    """Release reserved stock for an expired/cancelled negotiation."""
+    if price_req.quantity <= 0:
+        return
+    inv = (
+        db.query(models.Inventory)
+        .filter(models.Inventory.product_id == price_req.product_id, models.Inventory.shop_id == org_id)
+        .with_for_update()
+        .first()
+    )
+    if inv:
+        inv.reserved_quantity = max(0, inv.reserved_quantity - price_req.quantity)
+        logger.info("[RESERVE_RELEASED] product=%d qty=%d remaining_reserved=%d", price_req.product_id, price_req.quantity, inv.reserved_quantity)
+
+
+def cleanup_expired_reservations(db: Session):
+    """
+    Batch cleanup: find all expired accepted requests without orders,
+    release their reserved stock, and mark them as expired.
+    Safe to call periodically or on-demand.
+    """
+    expired = (
+        db.query(models.PriceRequest)
+        .filter(
+            models.PriceRequest.status == "accepted",
+            models.PriceRequest.order_id == None,
+            models.PriceRequest.expires_at < datetime.utcnow(),
+        )
+        .all()
+    )
+    for req in expired:
+        inv = (
+            db.query(models.Inventory)
+            .filter(models.Inventory.product_id == req.product_id, models.Inventory.shop_id == req.shop_id)
+            .with_for_update()
+            .first()
+        )
+        if inv:
+            inv.reserved_quantity = max(0, inv.reserved_quantity - req.quantity)
+        req.status = "rejected"
+        req.admin_note = "Auto-expired: reservation released"
+        req.updated_at = datetime.utcnow()
+        logger.info("[CLEANUP_EXPIRED] request=%d product=%d qty=%d", req.id, req.product_id, req.quantity)
+    if expired:
+        db.commit()
+    return len(expired)
+
+
 # ======================== SCHEMAS ========================
 
 class PricingTierCreate(BaseModel):
@@ -318,6 +372,7 @@ def create_price_request(
             available = inv.quantity_on_hand - inv.reserved_quantity
             if available >= payload.quantity:
                 inv.reserved_quantity += payload.quantity
+                _clamp_inventory(inv)
             else:
                 logger.warning("[RESERVE_SKIP] product=%d available=%d requested_qty=%d", product.id, available, payload.quantity)
 
@@ -419,6 +474,7 @@ def respond_to_price_request(
             available = inv.quantity_on_hand - inv.reserved_quantity
             if available >= price_req.quantity:
                 inv.reserved_quantity += price_req.quantity
+                _clamp_inventory(inv)
             else:
                 logger.warning("[RESERVE_SKIP] product=%d available=%d qty=%d", price_req.product_id, available, price_req.quantity)
 
@@ -479,9 +535,14 @@ def create_order_from_negotiation(
     if price_req.status != "accepted":
         raise HTTPException(status_code=400, detail=f"Cannot create order — request is {price_req.status}")
 
-    # FIX 1: Negotiation expiry check
+    # FIX 1: Negotiation expiry check + reservation release
     if price_req.expires_at and price_req.expires_at < datetime.utcnow():
-        raise HTTPException(status_code=400, detail="Negotiation expired. Please submit a new request.")
+        _release_reservation(db, price_req, org_id)
+        price_req.status = "rejected"
+        price_req.admin_note = "Auto-expired: reservation released"
+        price_req.updated_at = datetime.utcnow()
+        db.commit()
+        raise HTTPException(status_code=400, detail="Negotiation expired. Reserved stock has been released. Please submit a new request.")
 
     # Idempotent: if already ordered, return existing
     if price_req.order_id:
@@ -530,9 +591,10 @@ def create_order_from_negotiation(
     )
     db.add(item)
 
-    # FIX 3: Release reservation and deduct stock
+    # Release reservation and deduct stock, then clamp
     inv.reserved_quantity = max(0, inv.reserved_quantity - price_req.quantity)
     inv.quantity_on_hand -= price_req.quantity
+    _clamp_inventory(inv)
 
     # Link back
     price_req.order_id = order.id
