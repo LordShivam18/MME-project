@@ -82,6 +82,7 @@ class Inventory(Base):
     shop_id = Column(Integer, ForeignKey("organizations.id"), index=True)
     product_id = Column(Integer, ForeignKey("products.id"), index=True)
     quantity_on_hand = Column(Integer, default=0)
+    reserved_quantity = Column(Integer, default=0, nullable=False, server_default="0")
     reorder_point = Column(Integer, default=0)
     safety_stock = Column(Integer, default=0)
     last_restocked_at = Column(DateTime, default=datetime.utcnow)
@@ -388,7 +389,9 @@ class PriceRequest(Base):
     admin_note = Column(String, nullable=True)
     decided_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     decided_at = Column(DateTime, nullable=True)
+    expires_at = Column(DateTime, nullable=True)
     order_id = Column(Integer, ForeignKey("orders.id"), nullable=True, index=True)
+    negotiation_delta = Column(Float, nullable=True)  # (bulk - approved) / bulk
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

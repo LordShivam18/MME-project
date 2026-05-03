@@ -91,7 +91,12 @@ class PricingEngine:
 
     @staticmethod
     def get_ai_context(db: Session, product: Product) -> AIContext:
-        """Fetch AI demand signals from product_insights table."""
+        """
+        Fetch AI demand signals from product_insights table.
+        FIX 4: If data is stale (>24h), fall back to default — no AI influence.
+        """
+        from datetime import datetime, timedelta
+
         insight = (
             db.query(ProductInsight)
             .filter(ProductInsight.product_id == product.id)
@@ -100,7 +105,11 @@ class PricingEngine:
         if not insight:
             return AIContext()
 
-        # Normalize predicted_daily_demand to 0-1 score (cap at 100 units/day = 1.0)
+        # Staleness protection: ignore AI data older than 24 hours
+        if insight.updated_at and insight.updated_at < datetime.utcnow() - timedelta(hours=24):
+            logger.info("[AI_STALE] product=%d insight_updated=%s — falling back to default pricing", product.id, insight.updated_at)
+            return AIContext()
+
         raw_demand = insight.predicted_daily_demand or 0.0
         demand_score = min(raw_demand / 100.0, 1.0)
 

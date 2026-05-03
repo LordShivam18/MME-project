@@ -215,6 +215,10 @@ async def lifespan(app: FastAPI):
                 conn.execute(text("CREATE INDEX IF NOT EXISTS ix_pr_pending_only ON price_requests(product_id, user_id, created_at DESC) WHERE status = 'pending'"))
             except Exception:
                 pass  # Partial indexes may not be supported on all PG versions
+            # --- Elite hardening columns ---
+            conn.execute(text("ALTER TABLE inventory ADD COLUMN IF NOT EXISTS reserved_quantity INTEGER DEFAULT 0"))
+            conn.execute(text("ALTER TABLE price_requests ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP"))
+            conn.execute(text("ALTER TABLE price_requests ADD COLUMN IF NOT EXISTS negotiation_delta FLOAT"))
             conn.commit()
         logger.info("Migration check complete: all columns, indexes, and tables ensured")
     except Exception as e:

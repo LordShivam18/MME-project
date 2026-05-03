@@ -121,7 +121,9 @@ class PriceRequestResponse(BaseModel):
     risk_level: Optional[str] = None
     decided_by: Optional[int] = None
     decided_at: Optional[datetime] = None
+    expires_at: Optional[datetime] = None
     order_id: Optional[int] = None
+    negotiation_delta: Optional[float] = None
     created_at: Optional[datetime] = None
     class Config:
         from_attributes = True
@@ -300,8 +302,32 @@ def create_price_request(
         approved_price=requested if evaluation.auto_accept else None,
         decided_by=user_id if evaluation.auto_accept else None,
         decided_at=datetime.utcnow() if evaluation.auto_accept else None,
+        expires_at=datetime.utcnow() + timedelta(hours=24) if evaluation.auto_accept else None,
     )
     db.add(price_req)
+
+    # FIX 3: Reserve stock on auto-accept
+    if evaluation.auto_accept:
+        inv = (
+            db.query(models.Inventory)
+            .filter(models.Inventory.product_id == product.id, models.Inventory.shop_id == org_id)
+            .with_for_update()
+            .first()
+        )
+        if inv:
+            available = inv.quantity_on_hand - inv.reserved_quantity
+            if available >= payload.quantity:
+                inv.reserved_quantity += payload.quantity
+            else:
+                logger.warning("[RESERVE_SKIP] product=%d available=%d requested_qty=%d", product.id, available, payload.quantity)
+
+        # FIX 5: Negotiation delta
+        bulk_ppu, _, _ = PricingEngine.get_bulk_price(db, product, payload.quantity)
+        if bulk_ppu > 0:
+            delta = round((bulk_ppu - requested) / bulk_ppu, 4)
+            price_req.negotiation_delta = delta
+            logger.info("[NEGOTIATION_DELTA] product=%d delta=%.4f", product.id, delta)
+
     db.commit()
     db.refresh(price_req)
 
@@ -380,6 +406,28 @@ def respond_to_price_request(
         if approved < min_price:
             raise HTTPException(status_code=400, detail=f"Approved price below floor (₹{min_price:.2f})")
         price_req.approved_price = approved
+        price_req.expires_at = datetime.utcnow() + timedelta(hours=24)
+
+        # FIX 3: Reserve stock on manual accept
+        inv = (
+            db.query(models.Inventory)
+            .filter(models.Inventory.product_id == price_req.product_id, models.Inventory.shop_id == org_id)
+            .with_for_update()
+            .first()
+        )
+        if inv:
+            available = inv.quantity_on_hand - inv.reserved_quantity
+            if available >= price_req.quantity:
+                inv.reserved_quantity += price_req.quantity
+            else:
+                logger.warning("[RESERVE_SKIP] product=%d available=%d qty=%d", price_req.product_id, available, price_req.quantity)
+
+        # FIX 5: Negotiation delta
+        bulk_ppu, _, _ = PricingEngine.get_bulk_price(db, product, price_req.quantity)
+        if bulk_ppu > 0:
+            delta = round((bulk_ppu - approved) / bulk_ppu, 4)
+            price_req.negotiation_delta = delta
+            logger.info("[NEGOTIATION_DELTA] product=%d delta=%.4f", product.id, delta)
 
     price_req.status = payload.status
     price_req.admin_note = payload.admin_note
@@ -431,6 +479,10 @@ def create_order_from_negotiation(
     if price_req.status != "accepted":
         raise HTTPException(status_code=400, detail=f"Cannot create order — request is {price_req.status}")
 
+    # FIX 1: Negotiation expiry check
+    if price_req.expires_at and price_req.expires_at < datetime.utcnow():
+        raise HTTPException(status_code=400, detail="Negotiation expired. Please submit a new request.")
+
     # Idempotent: if already ordered, return existing
     if price_req.order_id:
         logger.info("[ORDER_EXISTS] request=%d order=%d", request_id, price_req.order_id)
@@ -441,11 +493,25 @@ def create_order_from_negotiation(
             total_amount=existing_order.total_amount if existing_order else 0.0,
         )
 
+    # FIX 2: Stock validation with row lock
+    inv = (
+        db.query(models.Inventory)
+        .filter(models.Inventory.product_id == price_req.product_id, models.Inventory.shop_id == org_id)
+        .with_for_update()
+        .first()
+    )
+    if not inv or inv.quantity_on_hand < price_req.quantity:
+        available = inv.quantity_on_hand if inv else 0
+        raise HTTPException(
+            status_code=400,
+            detail=f"Insufficient stock. Available: {available}, requested: {price_req.quantity}"
+        )
+
     # Price is LOCKED — use approved_price, never recompute
     unit_price = normalize_price(price_req.approved_price)
     total = normalize_price(unit_price * price_req.quantity)
 
-    # Create order (contact_id is NULL for negotiation-sourced orders)
+    # Create order
     order = models.Order(
         organization_id=org_id,
         contact_id=None,
@@ -454,9 +520,8 @@ def create_order_from_negotiation(
         total_amount=total,
     )
     db.add(order)
-    db.flush()  # Get order.id before committing
+    db.flush()
 
-    # Create order item
     item = models.OrderItem(
         order_id=order.id,
         product_id=price_req.product_id,
@@ -465,6 +530,10 @@ def create_order_from_negotiation(
     )
     db.add(item)
 
+    # FIX 3: Release reservation and deduct stock
+    inv.reserved_quantity = max(0, inv.reserved_quantity - price_req.quantity)
+    inv.quantity_on_hand -= price_req.quantity
+
     # Link back
     price_req.order_id = order.id
     price_req.updated_at = datetime.utcnow()
@@ -472,7 +541,7 @@ def create_order_from_negotiation(
     db.commit()
     db.refresh(order)
 
-    logger.info("[ORDER_CREATED] request_id=%d order_id=%d total=%.2f", request_id, order.id, total)
+    logger.info("[ORDER_CREATED] request_id=%d order_id=%d total=%.2f stock_remaining=%d", request_id, order.id, total, inv.quantity_on_hand)
 
     return OrderConversionResponse(
         message="Order created from negotiation",
