@@ -192,7 +192,7 @@ async def lifespan(app: FastAPI):
             # --- Pricing hardening: optimized indexes (FIX 6) ---
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_pr_status_created ON price_requests (status, created_at DESC)"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_pr_product_user_created ON price_requests (product_id, user_id, created_at DESC)"))
-            # --- Idempotency keys table (FIX 3) ---
+            # --- Idempotency keys table ---
             conn.execute(text("""
                 CREATE TABLE IF NOT EXISTS idempotency_keys (
                     id SERIAL PRIMARY KEY,
@@ -200,9 +200,21 @@ async def lifespan(app: FastAPI):
                     key VARCHAR NOT NULL,
                     response_json TEXT NOT NULL,
                     created_at TIMESTAMP DEFAULT NOW(),
+                    expires_at TIMESTAMP,
                     UNIQUE(user_id, key)
                 )
             """))
+            # --- Idempotency TTL column (FIX 1) ---
+            conn.execute(text("ALTER TABLE idempotency_keys ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP"))
+            # --- Order conversion columns (PART 2) ---
+            conn.execute(text("ALTER TABLE price_requests ADD COLUMN IF NOT EXISTS order_id INTEGER"))
+            conn.execute(text("ALTER TABLE orders ALTER COLUMN contact_id DROP NOT NULL"))
+            conn.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS negotiation_request_id INTEGER"))
+            # --- Partial index for pending requests (FIX 2) ---
+            try:
+                conn.execute(text("CREATE INDEX IF NOT EXISTS ix_pr_pending_only ON price_requests(product_id, user_id, created_at DESC) WHERE status = 'pending'"))
+            except Exception:
+                pass  # Partial indexes may not be supported on all PG versions
             conn.commit()
         logger.info("Migration check complete: all columns, indexes, and tables ensured")
     except Exception as e:

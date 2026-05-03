@@ -305,7 +305,8 @@ class Order(Base):
     __tablename__ = "orders"
     id = Column(Integer, primary_key=True, index=True)
     organization_id = Column(Integer, ForeignKey("organizations.id"), index=True, nullable=False)
-    contact_id = Column(Integer, ForeignKey("contacts.id"), index=True, nullable=False)
+    contact_id = Column(Integer, ForeignKey("contacts.id"), index=True, nullable=True)  # nullable for negotiation orders
+    negotiation_request_id = Column(Integer, ForeignKey("price_requests.id"), nullable=True, index=True)
     
     status = Column(String, default="pending", nullable=False) # pending, confirmed, shipped, delivered, cancelled
     delivery_status = Column(String, nullable=True) # processing, in_transit, etc
@@ -387,6 +388,7 @@ class PriceRequest(Base):
     admin_note = Column(String, nullable=True)
     decided_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     decided_at = Column(DateTime, nullable=True)
+    order_id = Column(Integer, ForeignKey("orders.id"), nullable=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -408,6 +410,7 @@ class IdempotencyKey(Base):
     key = Column(String, nullable=False)
     response_json = Column(String, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
+    expires_at = Column(DateTime, nullable=True)
 
     __table_args__ = (
         UniqueConstraint('user_id', 'key', name='uix_user_idempotency_key'),
