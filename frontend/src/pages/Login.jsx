@@ -40,8 +40,10 @@ export default function Login({ onLogin }) {
               localStorage.setItem('refresh_token', res.data.refresh_token);
               window.location.href = '/dashboard';
             } catch (err) {
-              console.error('Google backend auth error:', err.response?.data);
-              setError(err.response?.data?.detail || 'Google login failed');
+              const detail = err.response?.data?.detail;
+              const status = err.response?.status;
+              console.error('Google backend auth error:', { status, detail, data: err.response?.data });
+              setError(detail || `Google login failed (${status || 'network error'})`);
             }
           },
         });

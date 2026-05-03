@@ -49,8 +49,10 @@ axiosClient.interceptors.response.use(
     // Only attempt refresh on 401 and if we haven't already retried this request
     if (error.response && error.response.status === 401 && !originalRequest._retry) {
       
-      // Don't try to refresh the login or refresh endpoints themselves
-      if (originalRequest.url?.includes('/login') || originalRequest.url?.includes('/refresh')) {
+      // Don't try to refresh the login, refresh, or auth endpoints themselves
+      if (originalRequest.url?.includes('/login') || 
+          originalRequest.url?.includes('/refresh') ||
+          originalRequest.url?.includes('/auth/')) {
         return Promise.reject(error);
       }
 

@@ -362,86 +362,109 @@ def forgot_verify(payload: ForgotVerify, db: Session = Depends(get_db)):
 # ============================================================
 @router.post("/auth/google")
 def google_auth(payload: GoogleAuthPayload, db: Session = Depends(get_db)):
-    """Verify Google access_token via userinfo API, login or create user with smart account merge."""
+    """Verify Google access_token via userinfo API, login or create user."""
     try:
-        import urllib.request
-        import json as json_lib
+        import requests as http_requests
         
-        # --- Step 1: Call Google userinfo API to verify access_token ---
-        logger.info("GOOGLE_AUTH: verifying access_token via userinfo API")
+        print("GOOGLE_AUTH: received payload with access_token length =", len(payload.access_token))
         
-        req = urllib.request.Request(
+        # --- Step 1: Call Google userinfo API ---
+        resp = http_requests.get(
             "https://www.googleapis.com/oauth2/v3/userinfo",
-            headers={"Authorization": f"Bearer {payload.access_token}"}
+            headers={"Authorization": f"Bearer {payload.access_token}"},
+            timeout=10
         )
-        try:
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                userinfo = json_lib.loads(resp.read().decode())
-        except urllib.error.HTTPError as e:
-            logger.warning("GOOGLE_AUTH: userinfo API returned %s", e.code)
-            raise HTTPException(status_code=401, detail="Invalid or expired Google token")
-        except Exception as e:
-            logger.error("GOOGLE_AUTH: userinfo API call failed - %s", str(e))
-            raise HTTPException(status_code=502, detail="Could not verify Google token")
         
-        email = userinfo.get("email")
-        name = userinfo.get("name", "")
-        picture = userinfo.get("picture", "")
+        print("GOOGLE_AUTH: Google API status =", resp.status_code)
+        print("GOOGLE_AUTH: Google API response =", resp.text[:500])
+        
+        if resp.status_code != 200:
+            raise HTTPException(status_code=401, detail=f"Invalid Google token (HTTP {resp.status_code})")
+        
+        data = resp.json()
+        
+        # --- Step 2: Safe parsing ---
+        email = data.get("email")
+        name = data.get("name", "")
+        picture = data.get("picture", "")
+        
+        print("GOOGLE_AUTH: email =", email, "| name =", name)
         
         if not email:
-            raise HTTPException(status_code=400, detail="Google account has no email")
+            print("GOOGLE_AUTH: ERROR - no email in response:", data)
+            raise HTTPException(status_code=400, detail="Email not found in Google response")
         
-        if not userinfo.get("email_verified", False):
+        if not data.get("email_verified", False):
+            print("GOOGLE_AUTH: ERROR - email not verified for", email)
             raise HTTPException(status_code=400, detail="Google email not verified")
         
-        logger.info("GOOGLE_AUTH: verified user %s", email)
-        
-        # --- Step 2: Smart account merge ---
+        # --- Step 3: DB logic ---
         user = db.query(models.User).filter(models.User.email == email).first()
         
         if user:
-            # Existing user — merge Google profile data if missing
+            # Existing user — merge profile if missing
             updated = False
-            if name and not user.full_name:
+            if name and not getattr(user, 'full_name', None):
                 user.full_name = name
                 updated = True
-            if picture and not user.avatar_url:
+            if picture and not getattr(user, 'avatar_url', None):
                 user.avatar_url = picture
-                updated = True
-            if not user.username:
-                user.username = email.split("@")[0]
                 updated = True
             if updated:
                 db.commit()
-            logger.info("GOOGLE_AUTH: existing user login + merge (id=%s)", user.id)
+            print("GOOGLE_AUTH: existing user login, id =", user.id)
         else:
-            # New user — create org + user + subscription
-            org = models.Organization(name=f"{name or email.split('@')[0]}'s Organization")
+            # New user — generate unique username
+            base_username = email.split("@")[0]
+            username = base_username
+            counter = 1
+            while db.query(models.User).filter(models.User.username == username).first():
+                username = f"{base_username}{counter}"
+                counter += 1
+            
+            # Create org
+            org = models.Organization(name=f"{name or base_username}'s Organization")
             db.add(org)
             db.flush()
             
+            # Create user
             user = models.User(
                 email=email,
-                username=email.split("@")[0],
-                full_name=name or None,
-                avatar_url=picture or None,
-                hashed_password=None,  # OAuth-only user, no password
-                organization_id=org.id,
-                role="admin"
+                username=username,
+                hashed_password=None,
             )
+            user.organization_id = org.id
+            user.role = "admin"
+            
+            # Set profile fields safely
+            try:
+                user.full_name = name or None
+            except Exception:
+                pass
+            try:
+                user.avatar_url = picture or None
+            except Exception:
+                pass
+            
             db.add(user)
             
+            # Create subscription
             sub = models.Subscription(organization_id=org.id, plan="free", status="active")
             db.add(sub)
             
-            db.commit()
-            db.refresh(user)
-            logger.info("GOOGLE_AUTH: new user created id=%s, org=%s", user.id, org.id)
+            try:
+                db.commit()
+                db.refresh(user)
+                print("GOOGLE_AUTH: new user created, id =", user.id, "| username =", username)
+            except Exception as db_err:
+                db.rollback()
+                print("GOOGLE_AUTH: DB ERROR:", str(db_err))
+                raise HTTPException(status_code=500, detail=f"Failed to create account: {str(db_err)}")
         
-        # --- Step 3: Generate tokens ---
+        # --- Step 4: Generate tokens ---
         access_token, refresh_token = _create_user_tokens(user, db)
         
-        logger.info("GOOGLE_AUTH: tokens created for %s", email)
+        print("GOOGLE_AUTH: SUCCESS — tokens created for", email)
         
         return {
             "access_token": access_token,
@@ -451,5 +474,8 @@ def google_auth(payload: GoogleAuthPayload, db: Session = Depends(get_db)):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error("GOOGLE_AUTH_ERROR: %s", str(e), exc_info=True)
-        raise HTTPException(status_code=500, detail="Google login failed")
+        db.rollback()
+        print("GOOGLE_AUTH: UNHANDLED ERROR:", str(e))
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Google login failed: {str(e)}")

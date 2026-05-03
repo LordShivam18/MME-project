@@ -66,6 +66,7 @@ async def lifespan(app: FastAPI):
             conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS username VARCHAR"))
             conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS full_name VARCHAR"))
             conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url VARCHAR"))
+            conn.execute(text("ALTER TABLE users ALTER COLUMN hashed_password DROP NOT NULL"))
             # --- Organizations table ---
             conn.execute(text("ALTER TABLE organizations ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN DEFAULT false"))
             conn.execute(text("ALTER TABLE organizations ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP"))
