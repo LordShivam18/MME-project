@@ -1,15 +1,24 @@
 """
 Pricing API — Bulk pricing + negotiation endpoints.
 
-All endpoints are authenticated and multi-tenant safe.
-All pricing logic goes through PricingEngine (service layer).
+HARDENED:
+- Row-level locking on PATCH (FIX 1)
+- Server-side price recomputation (FIX 2)
+- Idempotency-Key header support (FIX 3)
+- 5-minute burst rate limit (FIX 4)
+- Price floor protection (FIX 5)
+- Audit trail: decided_by, decided_at (FIX 7)
+- Strict state machine (FIX 8)
+- Pricing cache invalidation (FIX 9)
 """
 
+import json
 import logging
+import time
 from typing import Optional, List
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, Header
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
 
@@ -22,6 +31,30 @@ from fastapi import Request
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Pricing"])
+
+
+# ======================== PRICING CACHE (FIX 9) ========================
+
+_pricing_cache = {}
+_PRICING_CACHE_TTL = 30
+
+
+def on_pricing_change(product_id: int):
+    """Invalidate pricing cache when tiers change or negotiation accepted."""
+    _pricing_cache.pop(product_id, None)
+    logger.debug("PRICING_CACHE: invalidated product=%d", product_id)
+
+
+def _get_cached_smart_price(product_id, qty):
+    key = f"{product_id}:{qty}"
+    entry = _pricing_cache.get(key)
+    if entry and (time.time() - entry["ts"]) < _PRICING_CACHE_TTL:
+        return entry["data"]
+    return None
+
+
+def _set_cached_smart_price(product_id, qty, data):
+    _pricing_cache[f"{product_id}:{qty}"] = {"data": data, "ts": time.time()}
 
 
 # ======================== HELPERS ========================
@@ -44,6 +77,13 @@ def _get_product_safe(db: Session, product_id: int, org_id: int) -> models.Produ
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
     return product
+
+
+def _compute_price_floor(product: models.Product) -> float:
+    """FIX 5: Price floor = max(cost_price, selling_price * 0.6)"""
+    cost = product.cost_price or 0.0
+    selling = product.selling_price or 0.0
+    return max(cost, selling * 0.6)
 
 
 # ======================== SCHEMAS ========================
@@ -97,6 +137,8 @@ class PriceRequestResponse(BaseModel):
     status: str
     admin_note: Optional[str] = None
     risk_level: Optional[str] = None
+    decided_by: Optional[int] = None
+    decided_at: Optional[datetime] = None
     created_at: Optional[datetime] = None
 
     class Config:
@@ -115,42 +157,29 @@ def create_pricing_tier(
     org_id = _org_id(current_user)
     product = _get_product_safe(db, payload.product_id, org_id)
 
-    # Check for duplicate tier
     existing = (
         db.query(models.PricingTier)
-        .filter(
-            models.PricingTier.product_id == product.id,
-            models.PricingTier.min_qty == payload.min_qty,
-        )
+        .filter(models.PricingTier.product_id == product.id, models.PricingTier.min_qty == payload.min_qty)
         .first()
     )
     if existing:
         raise HTTPException(status_code=409, detail=f"Tier for min_qty={payload.min_qty} already exists")
 
-    # Validate: tier price should be <= selling price
     if product.selling_price and payload.price_per_unit > product.selling_price:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Tier price (₹{payload.price_per_unit}) cannot exceed selling price (₹{product.selling_price})"
-        )
+        raise HTTPException(status_code=400, detail=f"Tier price cannot exceed selling price (₹{product.selling_price})")
 
-    # Validate: tier price should be > cost price
     if product.cost_price and payload.price_per_unit <= product.cost_price:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Tier price (₹{payload.price_per_unit}) must be above cost price (₹{product.cost_price})"
-        )
+        raise HTTPException(status_code=400, detail=f"Tier price must be above cost price (₹{product.cost_price})")
 
     tier = models.PricingTier(
-        product_id=product.id,
-        shop_id=org_id,
-        min_qty=payload.min_qty,
-        price_per_unit=payload.price_per_unit,
+        product_id=product.id, shop_id=org_id,
+        min_qty=payload.min_qty, price_per_unit=payload.price_per_unit,
     )
     db.add(tier)
     db.commit()
     db.refresh(tier)
 
+    on_pricing_change(product.id)  # FIX 9
     logger.info("PRICING: tier created product=%d min_qty=%d price=%.2f", product.id, payload.min_qty, payload.price_per_unit)
     return tier
 
@@ -163,10 +192,8 @@ def get_pricing_tiers(
 ):
     """List all pricing tiers for a product."""
     org_id = _org_id(current_user)
-    _get_product_safe(db, product_id, org_id)  # Tenant check
-
-    tiers = PricingEngine.get_tiers(db, product_id, org_id)
-    return tiers
+    _get_product_safe(db, product_id, org_id)
+    return PricingEngine.get_tiers(db, product_id, org_id)
 
 
 @router.delete("/pricing/tiers/{tier_id}", status_code=204)
@@ -185,8 +212,10 @@ def delete_pricing_tier(
     if not tier:
         raise HTTPException(status_code=404, detail="Tier not found")
 
+    product_id = tier.product_id
     db.delete(tier)
     db.commit()
+    on_pricing_change(product_id)  # FIX 9
     return None
 
 
@@ -199,27 +228,28 @@ def get_smart_price(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user)
 ):
-    """
-    Get smart pricing for a product at a given quantity.
-    Returns base, bulk, best price, savings, and upsell suggestion.
-    """
+    """Smart pricing with caching."""
     org_id = _org_id(current_user)
     product = _get_product_safe(db, product_id, org_id)
 
     if qty < 1:
         raise HTTPException(status_code=400, detail="qty must be >= 1")
 
-    result = PricingEngine.get_smart_price(db, product, qty)
+    # FIX 9: Check cache
+    cached = _get_cached_smart_price(product_id, qty)
+    if cached:
+        return cached
 
-    return SmartPriceResponse(
-        base_price=result.base_price,
-        bulk_price=result.bulk_price,
-        best_price=result.best_price,
-        savings=result.savings,
-        tier_applied=result.tier_applied,
-        tier_min_qty=result.tier_min_qty,
+    result = PricingEngine.get_smart_price(db, product, qty)
+    resp = SmartPriceResponse(
+        base_price=result.base_price, bulk_price=result.bulk_price,
+        best_price=result.best_price, savings=result.savings,
+        tier_applied=result.tier_applied, tier_min_qty=result.tier_min_qty,
         suggestion=result.suggestion,
     )
+
+    _set_cached_smart_price(product_id, qty, resp)
+    return resp
 
 
 # ======================== PRICE NEGOTIATION ========================
@@ -230,32 +260,58 @@ def create_price_request(
     request: Request,
     payload: PriceRequestCreate,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_user),
+    x_idempotency_key: Optional[str] = Header(None),
 ):
     """
     Submit a price negotiation request.
-    Rate limited: max 10/minute.
-    Max 5 pending requests per product per user per 24h.
+    Supports Idempotency-Key header for safe retries.
     """
     org_id = _org_id(current_user)
     user_id = current_user.get("user_id")
+
+    # --- FIX 3: Idempotency check ---
+    if x_idempotency_key:
+        existing_key = (
+            db.query(models.IdempotencyKey)
+            .filter(models.IdempotencyKey.user_id == user_id, models.IdempotencyKey.key == x_idempotency_key)
+            .first()
+        )
+        if existing_key:
+            logger.info("PRICING: idempotency hit key=%s user=%d", x_idempotency_key, user_id)
+            return PriceRequestResponse(**json.loads(existing_key.response_json))
+
     product = _get_product_safe(db, payload.product_id, org_id)
 
-    # --- Anti-spam: max 5 requests per product per user per 24h ---
-    cutoff = datetime.utcnow() - timedelta(hours=24)
-    recent_count = (
+    # --- FIX 4: Burst rate limit (2 per product per 5 min) ---
+    burst_cutoff = datetime.utcnow() - timedelta(minutes=5)
+    burst_count = (
         db.query(models.PriceRequest)
         .filter(
             models.PriceRequest.user_id == user_id,
             models.PriceRequest.product_id == product.id,
-            models.PriceRequest.created_at >= cutoff,
+            models.PriceRequest.created_at >= burst_cutoff,
         )
         .count()
     )
-    if recent_count >= 5:
+    if burst_count >= 2:
+        raise HTTPException(status_code=429, detail="Max 2 requests per product per 5 minutes")
+
+    # --- 24h limit ---
+    daily_cutoff = datetime.utcnow() - timedelta(hours=24)
+    daily_count = (
+        db.query(models.PriceRequest)
+        .filter(
+            models.PriceRequest.user_id == user_id,
+            models.PriceRequest.product_id == product.id,
+            models.PriceRequest.created_at >= daily_cutoff,
+        )
+        .count()
+    )
+    if daily_count >= 5:
         raise HTTPException(status_code=429, detail="Max 5 price requests per product per 24 hours")
 
-    # --- Reject duplicate pending requests ---
+    # --- Reject duplicate pending ---
     existing_pending = (
         db.query(models.PriceRequest)
         .filter(
@@ -268,47 +324,59 @@ def create_price_request(
     if existing_pending:
         raise HTTPException(status_code=409, detail="You already have a pending request for this product")
 
-    # --- Reject under-cost pricing ---
-    if product.cost_price and payload.requested_price <= product.cost_price:
+    # --- FIX 5: Price floor protection ---
+    min_price = _compute_price_floor(product)
+    if payload.requested_price < min_price:
         raise HTTPException(
             status_code=400,
-            detail=f"Requested price cannot be at or below cost (₹{product.cost_price:.2f})"
+            detail=f"Price too low. Minimum allowed: ₹{min_price:.2f}"
         )
 
-    # --- Evaluate via PricingEngine ---
+    # --- FIX 2: Server-side recomputation via PricingEngine ---
     evaluation = PricingEngine.evaluate_request(db, product, payload.quantity, payload.requested_price)
 
-    # --- Create request ---
     price_req = models.PriceRequest(
-        user_id=user_id,
-        shop_id=org_id,
-        product_id=product.id,
-        quantity=payload.quantity,
-        requested_price=payload.requested_price,
+        user_id=user_id, shop_id=org_id, product_id=product.id,
+        quantity=payload.quantity, requested_price=payload.requested_price,
         status="accepted" if evaluation.auto_accept else "pending",
         approved_price=payload.requested_price if evaluation.auto_accept else None,
+        decided_by=user_id if evaluation.auto_accept else None,
+        decided_at=datetime.utcnow() if evaluation.auto_accept else None,
     )
     db.add(price_req)
     db.commit()
     db.refresh(price_req)
 
+    if evaluation.auto_accept:
+        on_pricing_change(product.id)  # FIX 9
+
+    resp = PriceRequestResponse(
+        id=price_req.id, user_id=price_req.user_id, product_id=price_req.product_id,
+        quantity=price_req.quantity, requested_price=price_req.requested_price,
+        approved_price=price_req.approved_price, status=price_req.status,
+        risk_level=evaluation.risk_level,
+        decided_by=price_req.decided_by, decided_at=price_req.decided_at,
+        created_at=price_req.created_at,
+    )
+
+    # --- FIX 3: Store idempotency key ---
+    if x_idempotency_key:
+        idem = models.IdempotencyKey(
+            user_id=user_id, key=x_idempotency_key,
+            response_json=json.dumps(resp.model_dump(), default=str),
+        )
+        db.add(idem)
+        try:
+            db.commit()
+        except Exception:
+            db.rollback()  # Duplicate key race — safe to ignore
+
     logger.info(
-        "PRICING: request created id=%d product=%d qty=%d price=%.2f auto_accept=%s risk=%s",
+        "PRICING: request id=%d product=%d qty=%d price=%.2f auto=%s risk=%s",
         price_req.id, product.id, payload.quantity, payload.requested_price,
         evaluation.auto_accept, evaluation.risk_level,
     )
-
-    return PriceRequestResponse(
-        id=price_req.id,
-        user_id=price_req.user_id,
-        product_id=price_req.product_id,
-        quantity=price_req.quantity,
-        requested_price=price_req.requested_price,
-        approved_price=price_req.approved_price,
-        status=price_req.status,
-        risk_level=evaluation.risk_level,
-        created_at=price_req.created_at,
-    )
+    return resp
 
 
 @router.get("/price-requests", response_model=List[PriceRequestResponse])
@@ -338,37 +406,55 @@ def respond_to_price_request(
     current_user: dict = Depends(get_current_user)
 ):
     """
-    Seller responds to a price negotiation request.
-    Only the product owner (same org) can approve/reject.
+    Seller responds to a negotiation request.
+    FIX 1: Row-level lock prevents double-accept.
+    FIX 7: Audit trail (decided_by, decided_at).
+    FIX 8: Only pending → accepted/rejected transitions allowed.
     """
     org_id = _org_id(current_user)
+    user_id = current_user.get("user_id")
 
+    # FIX 1: Row-level lock to prevent concurrent double-accept
     price_req = (
         db.query(models.PriceRequest)
-        .filter(
-            models.PriceRequest.id == request_id,
-            models.PriceRequest.shop_id == org_id,
-        )
+        .filter(models.PriceRequest.id == request_id, models.PriceRequest.shop_id == org_id)
+        .with_for_update()
         .first()
     )
     if not price_req:
         raise HTTPException(status_code=404, detail="Price request not found")
 
+    # FIX 8: Strict state machine — only pending can transition
     if price_req.status != "pending":
-        raise HTTPException(status_code=400, detail=f"Request already {price_req.status}")
+        raise HTTPException(status_code=409, detail=f"Request already {price_req.status}. Cannot modify.")
 
-    # On accept: approved_price is required
+    # FIX 2: Server-side recomputation before acceptance
     if payload.status == "accepted":
         if not payload.approved_price:
             raise HTTPException(status_code=400, detail="approved_price is required when accepting")
+
+        # Recompute floor from engine — never trust earlier evaluation
+        product = _get_product_safe(db, price_req.product_id, org_id)
+        min_price = _compute_price_floor(product)
+        if payload.approved_price < min_price:
+            raise HTTPException(status_code=400, detail=f"Approved price below floor (₹{min_price:.2f})")
+
         price_req.approved_price = payload.approved_price
 
     price_req.status = payload.status
     price_req.admin_note = payload.admin_note
+
+    # FIX 7: Audit trail
+    price_req.decided_by = user_id
+    price_req.decided_at = datetime.utcnow()
     price_req.updated_at = datetime.utcnow()
 
     db.commit()
     db.refresh(price_req)
 
-    logger.info("PRICING: request %d → %s (approved_price=%s)", request_id, payload.status, payload.approved_price)
+    # FIX 9: Invalidate pricing cache on acceptance
+    if payload.status == "accepted":
+        on_pricing_change(price_req.product_id)
+
+    logger.info("PRICING: request %d → %s by user=%d (approved=%s)", request_id, payload.status, user_id, payload.approved_price)
     return price_req

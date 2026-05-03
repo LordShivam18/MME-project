@@ -385,15 +385,30 @@ class PriceRequest(Base):
     approved_price = Column(Float, nullable=True)
     status = Column(String, default="pending", nullable=False, server_default="pending")
     admin_note = Column(String, nullable=True)
+    decided_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    decided_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     # Relationships
-    user = relationship("User")
+    user = relationship("User", foreign_keys=[user_id])
     product = relationship("Product")
     organization = relationship("Organization")
 
     __table_args__ = (
         CheckConstraint("status IN ('pending','accepted','rejected')", name='ck_price_request_status'),
         Index('ix_price_requests_user_product', 'user_id', 'product_id'),
+    )
+
+
+class IdempotencyKey(Base):
+    __tablename__ = "idempotency_keys"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    key = Column(String, nullable=False)
+    response_json = Column(String, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint('user_id', 'key', name='uix_user_idempotency_key'),
     )

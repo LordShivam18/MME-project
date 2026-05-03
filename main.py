@@ -186,6 +186,23 @@ async def lifespan(app: FastAPI):
             """))
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_price_requests_user_product ON price_requests (user_id, product_id)"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_price_requests_shop_status ON price_requests (shop_id, status)"))
+            # --- Pricing hardening: audit columns ---
+            conn.execute(text("ALTER TABLE price_requests ADD COLUMN IF NOT EXISTS decided_by INTEGER"))
+            conn.execute(text("ALTER TABLE price_requests ADD COLUMN IF NOT EXISTS decided_at TIMESTAMP"))
+            # --- Pricing hardening: optimized indexes (FIX 6) ---
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_pr_status_created ON price_requests (status, created_at DESC)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_pr_product_user_created ON price_requests (product_id, user_id, created_at DESC)"))
+            # --- Idempotency keys table (FIX 3) ---
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS idempotency_keys (
+                    id SERIAL PRIMARY KEY,
+                    user_id INTEGER NOT NULL REFERENCES users(id),
+                    key VARCHAR NOT NULL,
+                    response_json TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT NOW(),
+                    UNIQUE(user_id, key)
+                )
+            """))
             conn.commit()
         logger.info("Migration check complete: all columns, indexes, and tables ensured")
     except Exception as e:
