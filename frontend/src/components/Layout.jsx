@@ -30,6 +30,7 @@ const typeIcons = {
   low_stock: '📉',
   ai_alert: '🤖',
   order_update: '🚚',
+  negotiation: '💰',
   payment: '💳',
   insight: '⚡',
   system: 'ℹ️',

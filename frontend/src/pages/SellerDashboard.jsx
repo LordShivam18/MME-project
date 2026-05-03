@@ -13,13 +13,14 @@ export default function SellerDashboard() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
   const [actionLoading, setActionLoading] = useState(null);
+  const [activeTab, setActiveTab] = useState('pending');
 
-  useEffect(() => { fetchDashboard(); }, []);
+  useEffect(() => { fetchDashboard(activeTab); }, [activeTab]);
 
-  const fetchDashboard = async () => {
+  const fetchDashboard = async (status) => {
     setIsLoading(true);
     try {
-      const res = await axiosClient.get('/api/v1/pricing/requests/dashboard');
+      const res = await axiosClient.get(`/api/v1/pricing/requests/dashboard?status=${status}`);
       setRequests(res.data);
     } catch (err) {
       setError(err.response?.data?.detail || 'Failed to load dashboard');
@@ -51,15 +52,32 @@ export default function SellerDashboard() {
       <div style={s.header}>
         <div>
           <h1 style={s.title}>🤖 AI Negotiation Dashboard</h1>
-          <p style={s.subtitle}>Pending pricing requests with AI-assisted insights</p>
+          <p style={s.subtitle}>Pricing requests with AI-assisted insights</p>
         </div>
-        <div style={s.statBadge}>{requests.length} pending</div>
+        <div style={s.statBadge}>{requests.length} {activeTab}</div>
+      </div>
+
+      {/* Tab filters */}
+      <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.5rem' }}>
+        {['pending', 'accepted', 'rejected'].map(tab => (
+          <button
+            key={tab}
+            onClick={() => setActiveTab(tab)}
+            style={{
+              padding: '0.5rem 1.25rem', borderRadius: '8px', fontWeight: 600, fontSize: '0.9rem',
+              cursor: 'pointer', border: '1px solid', textTransform: 'capitalize',
+              backgroundColor: activeTab === tab ? '#0f172a' : '#fff',
+              color: activeTab === tab ? '#fff' : '#64748b',
+              borderColor: activeTab === tab ? '#0f172a' : '#e2e8f0',
+            }}
+          >{tab}</button>
+        ))}
       </div>
 
       {requests.length === 0 ? (
         <div style={s.empty}>
           <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>🎯</div>
-          <h3 style={{ color: '#64748b' }}>No pending requests</h3>
+          <h3 style={{ color: '#64748b' }}>No {activeTab} requests</h3>
           <p style={{ color: '#94a3b8' }}>All negotiations are resolved</p>
         </div>
       ) : (
@@ -113,6 +131,7 @@ export default function SellerDashboard() {
                   <span style={{ fontSize: '0.85rem', color: '#334155' }}>{req.ai_suggestion}</span>
                 </div>
 
+                {activeTab === 'pending' && (
                 <div style={s.actions}>
                   <button
                     onClick={() => handleAction(req.request_id, 'accept')}
@@ -129,6 +148,7 @@ export default function SellerDashboard() {
                     ✗ Reject
                   </button>
                 </div>
+                )}
               </div>
             );
           })}

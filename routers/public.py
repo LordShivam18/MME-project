@@ -22,7 +22,7 @@ from sqlalchemy import func, desc
 from pydantic import BaseModel
 
 from database import get_db
-from models.core import Product, Inventory, Organization
+from models.core import Product, Inventory, Organization, Review
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Public"])
@@ -238,6 +238,9 @@ class PublicStoreResponse(BaseModel):
     address: Optional[str] = None
     phone: Optional[str] = None
     product_count: int = 0
+    rating: float = 0.0
+    total_reviews: int = 0
+    trust_score: float = 0.0
 
     class Config:
         from_attributes = True
@@ -267,6 +270,17 @@ def list_public_stores(
         .subquery()
     )
 
+    # Review aggregation subquery
+    review_sq = (
+        db.query(
+            Review.store_id,
+            sqlfunc.avg(Review.rating).label("avg_rating"),
+            sqlfunc.count(Review.id).label("total_reviews"),
+        )
+        .group_by(Review.store_id)
+        .subquery()
+    )
+
     base_query = (
         db.query(
             Organization.id,
@@ -274,9 +288,13 @@ def list_public_stores(
             Organization.category,
             Organization.address,
             Organization.phone,
+            Organization.trust_score,
             sqlfunc.coalesce(product_count_sq.c.product_count, 0).label("product_count"),
+            sqlfunc.coalesce(review_sq.c.avg_rating, 0.0).label("avg_rating"),
+            sqlfunc.coalesce(review_sq.c.total_reviews, 0).label("total_reviews"),
         )
         .outerjoin(product_count_sq, Organization.id == product_count_sq.c.shop_id)
+        .outerjoin(review_sq, Organization.id == review_sq.c.store_id)
         .filter(
             Organization.is_public == True,
             Organization.is_deleted == False,
@@ -304,6 +322,9 @@ def list_public_stores(
                 id=r.id, name=r.name or "",
                 category=r.category, address=r.address, phone=r.phone,
                 product_count=r.product_count,
+                rating=round(r.avg_rating, 1),
+                total_reviews=r.total_reviews,
+                trust_score=round(r.trust_score or 0, 2),
             ).model_dump()
             for r in rows
         ],
@@ -323,6 +344,7 @@ class SearchProductResponse(BaseModel):
     store_id: int = 0
     demand_score: float = 0.0
     relevance_score: float = 0.0
+    ranking_reason: str = ""
 
     class Config:
         from_attributes = True
@@ -393,6 +415,18 @@ def search_products(
         price_score = max(0, 1.0 - (price_val / 10000.0))  # Normalize: cheaper = higher score
         relevance = round(0.5 * demand_score + 0.3 * avail_score + 0.2 * price_score, 3)
 
+        # Ranking reason
+        if demand_score > 0.6 and availability == "in_stock":
+            ranking_reason = "High demand + In stock"
+        elif price_score > 0.7:
+            ranking_reason = "Best price"
+        elif availability == "low_stock":
+            ranking_reason = "Limited availability"
+        elif demand_score > 0.5:
+            ranking_reason = "Popular item"
+        else:
+            ranking_reason = "Recommended"
+
         results.append(SearchProductResponse(
             product_id=r.product_id,
             name=r.name or "",
@@ -404,6 +438,7 @@ def search_products(
             store_id=r.store_id,
             demand_score=round(demand_score, 3),
             relevance_score=relevance,
+            ranking_reason=ranking_reason,
         ))
 
     # Sort
@@ -417,3 +452,151 @@ def search_products(
         results.sort(key=lambda x: x.relevance_score, reverse=True)
 
     return results
+
+
+# ======================== REVIEWS + TRUST ========================
+
+from pydantic import Field as PydField
+from auth import get_current_user
+from models.core import User, Order
+
+
+class ReviewCreate(BaseModel):
+    store_id: int
+    order_id: Optional[int] = None
+    product_id: Optional[int] = None
+    rating: int = PydField(..., ge=1, le=5)
+    comment: Optional[str] = PydField(None, max_length=1000)
+
+
+@router.post("/reviews")
+def create_review(
+    payload: ReviewCreate,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """Create a review for a store. Only after a delivered order."""
+    user_id = current_user.get("user_id")
+
+    # Prevent self-review
+    org_id = current_user.get("organization_id")
+    if org_id == payload.store_id:
+        from fastapi import HTTPException as HE
+        raise HE(status_code=400, detail="Cannot review your own store")
+
+    # Verify order belongs to user and is delivered (if order_id provided)
+    if payload.order_id:
+        from fastapi import HTTPException as HE
+        order = db.query(Order).filter(
+            Order.id == payload.order_id,
+            Order.user_id == user_id,
+        ).first()
+        if not order:
+            raise HE(status_code=404, detail="Order not found")
+        if order.status != "delivered":
+            raise HE(status_code=400, detail="Can only review after order is delivered")
+
+        # Prevent duplicate
+        existing = db.query(Review).filter(
+            Review.user_id == user_id, Review.order_id == payload.order_id
+        ).first()
+        if existing:
+            raise HE(status_code=409, detail="Already reviewed this order")
+
+    review = Review(
+        user_id=user_id,
+        store_id=payload.store_id,
+        order_id=payload.order_id,
+        product_id=payload.product_id,
+        rating=payload.rating,
+        comment=payload.comment,
+    )
+    db.add(review)
+    db.commit()
+    db.refresh(review)
+
+    # Recompute trust score
+    _recompute_trust_score(db, payload.store_id)
+
+    return {
+        "id": review.id,
+        "rating": review.rating,
+        "message": "Review submitted successfully",
+    }
+
+
+@router.get("/stores/{store_id}/reviews")
+def get_store_reviews(
+    store_id: int,
+    limit: int = Query(20, ge=1, le=50),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+):
+    """Get reviews for a public store."""
+    from sqlalchemy import func as sqlfunc
+
+    reviews = (
+        db.query(Review)
+        .filter(Review.store_id == store_id)
+        .order_by(Review.created_at.desc())
+        .offset(offset).limit(limit)
+        .all()
+    )
+
+    total = db.query(sqlfunc.count(Review.id)).filter(Review.store_id == store_id).scalar() or 0
+    avg = db.query(sqlfunc.avg(Review.rating)).filter(Review.store_id == store_id).scalar() or 0
+
+    return {
+        "store_id": store_id,
+        "avg_rating": round(float(avg), 1),
+        "total_reviews": total,
+        "reviews": [
+            {
+                "id": r.id,
+                "user_id": r.user_id,
+                "rating": r.rating,
+                "comment": r.comment,
+                "created_at": r.created_at,
+            }
+            for r in reviews
+        ],
+    }
+
+
+def _recompute_trust_score(db: Session, store_id: int):
+    """Recompute trust score for an organization after a new review."""
+    from sqlalchemy import func as sqlfunc
+
+    org = db.query(Organization).filter(Organization.id == store_id).first()
+    if not org:
+        return
+
+    # Signal 1: Rating (40%)
+    avg_rating = db.query(sqlfunc.avg(Review.rating)).filter(Review.store_id == store_id).scalar() or 0
+    rating_score = float(avg_rating) / 5.0
+
+    # Signal 2: Order success rate (30%)
+    total_orders = db.query(sqlfunc.count(Order.id)).filter(Order.shop_id == store_id).scalar() or 0
+    delivered_orders = db.query(sqlfunc.count(Order.id)).filter(
+        Order.shop_id == store_id, Order.status == "delivered"
+    ).scalar() or 0
+    order_success = delivered_orders / total_orders if total_orders > 0 else 0.5
+
+    # Signal 3: Negotiation fairness (20%)
+    from models.core import PriceRequest
+    neg_count = db.query(sqlfunc.count(PriceRequest.id)).filter(PriceRequest.shop_id == store_id).scalar() or 0
+    avg_delta = db.query(sqlfunc.avg(PriceRequest.negotiation_delta)).filter(
+        PriceRequest.shop_id == store_id
+    ).scalar() or 0
+    neg_fairness = max(0, 1.0 - abs(float(avg_delta))) if neg_count > 0 else 0.5
+
+    # Signal 4: Activity level (10%) — has products
+    product_count = db.query(sqlfunc.count(Product.id)).filter(
+        Product.shop_id == store_id, Product.is_deleted == False
+    ).scalar() or 0
+    activity = min(product_count / 10.0, 1.0)
+
+    trust = round(0.4 * rating_score + 0.3 * order_success + 0.2 * neg_fairness + 0.1 * activity, 2)
+    org.trust_score = trust
+    db.commit()
+    logger.info("TRUST_RECOMPUTE: store=%d trust=%.2f", store_id, trust)

@@ -127,7 +127,23 @@ export default function Marketplace() {
               <div style={s.storeCardAvatar}>{store.name?.[0] || '?'}</div>
               <h3 style={{ margin: '0.75rem 0 0.25rem', fontSize: '1.1rem', fontWeight: 700, color: '#0f172a' }}>{store.name}</h3>
               {store.category && <span style={{ ...s.badge, fontSize: '0.75rem' }}>{store.category}</span>}
-              <div style={{ marginTop: '0.75rem', fontSize: '0.85rem', color: '#64748b' }}>
+              
+              {/* Rating + Trust */}
+              <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', marginTop: '0.5rem' }}>
+                {store.total_reviews > 0 && (
+                  <span style={{ fontSize: '0.85rem', color: '#f59e0b', fontWeight: 700 }}>
+                    ⭐ {store.rating}
+                    <span style={{ color: '#94a3b8', fontWeight: 400, fontSize: '0.75rem' }}> ({store.total_reviews})</span>
+                  </span>
+                )}
+                {store.trust_score > 0 && (
+                  <span style={{ fontSize: '0.75rem', color: '#059669', fontWeight: 600, padding: '1px 6px', backgroundColor: '#d1fae5', borderRadius: '4px' }}>
+                    Trusted {Math.round(store.trust_score * 100)}%
+                  </span>
+                )}
+              </div>
+
+              <div style={{ marginTop: '0.5rem', fontSize: '0.85rem', color: '#64748b' }}>
                 {store.address && <div>📍 {store.address}</div>}
                 <div style={{ marginTop: '0.5rem', fontWeight: 600, color: '#3b82f6' }}>{store.product_count} products →</div>
               </div>

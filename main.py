@@ -243,6 +243,30 @@ async def lifespan(app: FastAPI):
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_user_kyc_user ON user_kyc (user_id)"))
             # --- Chat ↔ Order link ---
             conn.execute(text("ALTER TABLE messages ADD COLUMN IF NOT EXISTS order_id INTEGER REFERENCES orders(id)"))
+            # --- Trust + Reviews ---
+            conn.execute(text("ALTER TABLE organizations ADD COLUMN IF NOT EXISTS trust_score FLOAT DEFAULT 0.0"))
+            conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_blocked_at TIMESTAMP"))
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS reviews (
+                    id SERIAL PRIMARY KEY,
+                    user_id INTEGER NOT NULL REFERENCES users(id),
+                    store_id INTEGER NOT NULL REFERENCES organizations(id),
+                    order_id INTEGER REFERENCES orders(id),
+                    product_id INTEGER REFERENCES products(id),
+                    rating INTEGER NOT NULL CHECK (rating >= 1 AND rating <= 5),
+                    comment VARCHAR(1000),
+                    created_at TIMESTAMP DEFAULT NOW(),
+                    UNIQUE (user_id, order_id)
+                )
+            """))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_reviews_store ON reviews (store_id)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_reviews_user ON reviews (user_id)"))
+            # --- Search performance: trigram index ---
+            try:
+                conn.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
+                conn.execute(text("CREATE INDEX IF NOT EXISTS idx_products_name_trgm ON products USING gin (name gin_trgm_ops)"))
+            except Exception:
+                pass  # Extension may not be available in all environments
             conn.commit()
         logger.info("Migration check complete: all columns, indexes, and tables ensured")
     except Exception as e:

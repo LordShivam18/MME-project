@@ -125,6 +125,11 @@ export default function SearchBar() {
                     </span>
                   </div>
                   {p.category && <div style={s.catBadge}>{p.category}</div>}
+                  {p.ranking_reason && (
+                    <div style={{ fontSize: '0.75rem', color: '#3b82f6', fontWeight: 600, marginBottom: '0.5rem' }}>
+                      💡 {p.ranking_reason}
+                    </div>
+                  )}
                   
                   <div style={s.cardBody}>
                     <div style={s.priceTag}>₹{p.price?.toFixed(2)}</div>

@@ -14,6 +14,7 @@ class Organization(Base):
     category = Column(String, nullable=True)
     address = Column(String, nullable=True)
     phone = Column(String, nullable=True)
+    trust_score = Column(Float, default=0.0, nullable=False, server_default="0.0")
     is_deleted = Column(Boolean, default=False, nullable=False, server_default="false")
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -44,6 +45,7 @@ class User(Base):
     is_platform_admin = Column(Boolean, default=False, nullable=False, server_default="false")
     token_version = Column(Integer, default=0, nullable=False, server_default="0")
     is_deleted = Column(Boolean, default=False, nullable=False, server_default="false")
+    last_blocked_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -442,3 +444,23 @@ class UserKYC(Base):
 
     # Relationships
     user = relationship("User")
+
+
+class Review(Base):
+    __tablename__ = "reviews"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    store_id = Column(Integer, ForeignKey("organizations.id"), nullable=False, index=True)
+    order_id = Column(Integer, ForeignKey("orders.id"), nullable=True, index=True)
+    product_id = Column(Integer, ForeignKey("products.id"), nullable=True, index=True)
+    rating = Column(Integer, nullable=False)  # 1-5
+    comment = Column(String(1000), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    # Relationships
+    user = relationship("User")
+    organization = relationship("Organization")
+
+    __table_args__ = (
+        UniqueConstraint('user_id', 'order_id', name='uix_user_order_review'),
+    )

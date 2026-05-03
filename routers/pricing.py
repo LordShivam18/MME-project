@@ -308,6 +308,25 @@ def create_price_request(
     # if product.shop_id == org_id:
     #     raise HTTPException(status_code=403, detail="Cannot negotiate your own product")
 
+    # --- FIX 5: Abuse prevention (rejection rate cooldown) ---
+    db_user = db.query(models.User).filter(models.User.id == user_id).first()
+    if db_user and db_user.last_blocked_at:
+        cooldown_end = db_user.last_blocked_at + timedelta(hours=1)
+        if datetime.utcnow() < cooldown_end:
+            raise HTTPException(status_code=429, detail="Negotiation temporarily blocked due to high rejection rate. Try again later.")
+
+    total_reqs = db.query(models.PriceRequest).filter(models.PriceRequest.user_id == user_id).count()
+    if total_reqs >= 5:
+        rejected_reqs = db.query(models.PriceRequest).filter(
+            models.PriceRequest.user_id == user_id, models.PriceRequest.status == "rejected"
+        ).count()
+        rejection_rate = rejected_reqs / total_reqs if total_reqs > 0 else 0
+        if rejection_rate > 0.8:
+            if db_user:
+                db_user.last_blocked_at = datetime.utcnow()
+                db.commit()
+            raise HTTPException(status_code=429, detail="Negotiation blocked: rejection rate too high. Cooldown 1 hour.")
+
     # --- Burst rate limit: 2 per product per 5 min ---
     burst_cutoff = datetime.utcnow() - timedelta(minutes=5)
     burst_count = db.query(models.PriceRequest).filter(
@@ -433,11 +452,14 @@ def list_price_requests(
 
 @router.get("/pricing/requests/dashboard")
 def seller_negotiation_dashboard(
+    status: Optional[str] = "pending",
+    product_id: Optional[int] = None,
     db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)
 ):
     """
     AI-assisted negotiation dashboard for sellers.
-    Returns pending requests enriched with bulk pricing, demand signals, and AI suggestions.
+    Returns requests enriched with bulk pricing, demand signals, and AI suggestions.
+    Supports filtering by status (pending/accepted/rejected) and product_id.
     """
     org_id = _org_id(current_user)
     user_id = current_user.get("user_id")
@@ -445,16 +467,19 @@ def seller_negotiation_dashboard(
     if db_user and db_user.business_type == "customer":
         raise HTTPException(status_code=403, detail="Customers cannot access the seller dashboard")
 
-    pending = (
+    query = (
         db.query(models.PriceRequest)
-        .filter(models.PriceRequest.shop_id == org_id, models.PriceRequest.status == "pending")
-        .order_by(models.PriceRequest.created_at.desc())
-        .limit(50)
-        .all()
+        .filter(models.PriceRequest.shop_id == org_id)
     )
+    if status:
+        query = query.filter(models.PriceRequest.status == status)
+    if product_id:
+        query = query.filter(models.PriceRequest.product_id == product_id)
+
+    requests = query.order_by(models.PriceRequest.created_at.desc()).limit(50).all()
 
     results = []
-    for req in pending:
+    for req in requests:
         product = db.query(models.Product).filter(models.Product.id == req.product_id).first()
         if not product:
             continue
@@ -563,6 +588,23 @@ def respond_to_price_request(
         logger.info("[ACCEPTED] seller=%d request=%d approved=%.2f", user_id, request_id, price_req.approved_price)
     else:
         logger.info("[REJECTED] seller=%d request=%d", user_id, request_id)
+
+    # FIX 4: Notify buyer
+    try:
+        buyer = db.query(models.User).filter(models.User.id == price_req.user_id).first()
+        if buyer and buyer.organization_id:
+            product = db.query(models.Product).filter(models.Product.id == price_req.product_id).first()
+            pname = product.name if product else f"Product #{price_req.product_id}"
+            notif = models.Notification(
+                organization_id=buyer.organization_id,
+                type="negotiation",
+                message=f"Your price request for {pname} was {payload.status}.",
+                priority="medium",
+            )
+            db.add(notif)
+            db.commit()
+    except Exception as ne:
+        logger.warning("Notification error: %s", str(ne))
 
     return price_req
 
