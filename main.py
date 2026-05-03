@@ -78,6 +78,8 @@ async def lifespan(app: FastAPI):
             conn.execute(text("ALTER TABLE products ADD COLUMN IF NOT EXISTS low_stock_threshold INTEGER DEFAULT 5"))
             # --- Products/Inventory index for public API ---
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_inventory_qty ON inventory(quantity_on_hand)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_inventory_product_id ON inventory(product_id)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_products_updated_at ON products(updated_at)"))
             # --- Inventory table ---
             conn.execute(text("ALTER TABLE inventory ADD COLUMN IF NOT EXISTS created_at TIMESTAMP"))
             conn.execute(text("ALTER TABLE inventory ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP"))
