@@ -4,6 +4,38 @@ import PredictionWidget from '../components/PredictionWidget';
 import { LoadingSpinner, ErrorState, EmptyState } from '../components/StateSpinners';
 import { formatCurrency } from '../utils';
 
+// --- Availability Badge ---
+function AvailabilityBadge({ qty, threshold = 5 }) {
+  let label, bg, color;
+  if (qty <= 0) {
+    label = 'Out of Stock';
+    bg = '#fef2f2';
+    color = '#dc2626';
+  } else if (qty <= threshold) {
+    label = 'Low Stock';
+    bg = '#fffbeb';
+    color = '#d97706';
+  } else {
+    label = 'In Stock';
+    bg = '#f0fdf4';
+    color = '#16a34a';
+  }
+  return (
+    <span style={{
+      display: 'inline-flex', alignItems: 'center', gap: '4px',
+      padding: '3px 10px', borderRadius: '999px', fontSize: '0.75rem',
+      fontWeight: 700, background: bg, color: color, border: `1px solid ${color}22`,
+      letterSpacing: '0.02em', textTransform: 'uppercase'
+    }}>
+      <span style={{
+        width: 7, height: 7, borderRadius: '50%',
+        background: color, display: 'inline-block'
+      }} />
+      {label}
+    </span>
+  );
+}
+
 export default function Inventory() {
   const [summaryData, setSummaryData] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -63,18 +95,17 @@ export default function Inventory() {
         {summaryData.map(item => {
           const qty = item.quantity_on_hand;
           const reorderLimit = item.reorder_point;
-          const isLowStock = qty <= reorderLimit;
+          const threshold = item.low_stock_threshold || reorderLimit || 5;
 
           return (
-            <div key={item.product_id} className="card" style={{ border: `2px solid ${isLowStock ? '#ffcccc' : '#eee'}`, borderRadius: '12px', padding: '16px', display: 'flex', justifyContent: 'space-between', backgroundColor: '#fff', boxShadow: '0 4px 12px rgba(0,0,0,0.2)', transition: '0.2s', marginBottom: '1rem' }}>
+            <div key={item.product_id} className="card" style={{ border: `2px solid ${qty <= 0 ? '#fecaca' : qty <= threshold ? '#fde68a' : '#eee'}`, borderRadius: '12px', padding: '16px', display: 'flex', justifyContent: 'space-between', backgroundColor: '#fff', boxShadow: '0 4px 12px rgba(0,0,0,0.2)', transition: '0.2s', marginBottom: '1rem' }}>
               <div>
-                <h3 style={{ margin: '0' }}>{item.name} <span style={{ fontSize: '0.8rem', color: '#888' }}>({item.sku})</span></h3>
-                <p style={{ margin: '0.5rem 0', fontWeight: 'bold', color: isLowStock ? 'red' : 'green' }}>
-                  Current Stock: {qty} {isLowStock && (
-                    <span style={{ background: "red", color: "white", padding: "4px", borderRadius: "4px", marginLeft: "0.5rem", fontSize: "0.8rem" }}>
-                      LOW STOCK
-                    </span>
-                  )}
+                <h3 style={{ margin: '0', display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                  {item.name} <span style={{ fontSize: '0.8rem', color: '#888' }}>({item.sku})</span>
+                  <AvailabilityBadge qty={qty} threshold={threshold} />
+                </h3>
+                <p style={{ margin: '0.5rem 0', fontWeight: 'bold', color: qty <= 0 ? '#dc2626' : qty <= threshold ? '#d97706' : '#16a34a' }}>
+                  Current Stock: {qty}
                 </p>
                 <div style={{ fontSize: '0.9rem', color: '#555', marginTop: '1rem' }}>
                    Selling Price: {formatCurrency(item.selling_price)} | Category: {item.category}

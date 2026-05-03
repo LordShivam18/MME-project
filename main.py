@@ -75,6 +75,9 @@ async def lifespan(app: FastAPI):
             # --- Products table ---
             conn.execute(text("ALTER TABLE products ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN DEFAULT false"))
             conn.execute(text("ALTER TABLE products ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP"))
+            conn.execute(text("ALTER TABLE products ADD COLUMN IF NOT EXISTS low_stock_threshold INTEGER DEFAULT 5"))
+            # --- Products/Inventory index for public API ---
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_inventory_qty ON inventory(quantity_on_hand)"))
             # --- Inventory table ---
             conn.execute(text("ALTER TABLE inventory ADD COLUMN IF NOT EXISTS created_at TIMESTAMP"))
             conn.execute(text("ALTER TABLE inventory ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP"))
@@ -359,6 +362,10 @@ except Exception as e:
     logger.error("🚨 CRITICAL: Failed to load auth_routes: %s", str(e))
     import traceback
     traceback.print_exc()
+
+from routers import public
+app.include_router(public.router, prefix="/api/v1")
+logger.info("✅ Public routes registered: /api/v1/public/*")
 
 # ---------------- HEALTH CHECK ----------------
 @app.get("/health")

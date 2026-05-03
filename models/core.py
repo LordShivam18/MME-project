@@ -63,6 +63,7 @@ class Product(Base):
     cost_price = Column(Float)
     selling_price = Column(Float)
     lead_time_days = Column(Integer)
+    low_stock_threshold = Column(Integer, default=5, nullable=False, server_default="5")
     is_deleted = Column(Boolean, default=False, nullable=False, server_default="false")
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
