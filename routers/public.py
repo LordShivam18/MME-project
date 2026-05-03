@@ -82,13 +82,18 @@ def _set_cached(key, data):
 
 def invalidate_public_cache():
     """
-    FULL cache clear — called on every stock mutation:
-      - sale recorded (endpoints.py)
-      - stock added (endpoints.py)
-      - any future mutation point
-    DO NOT use partial key invalidation — always full clear.
+    FULL cache clear — always full wipe, no partial key invalidation.
     """
     _cache.clear()
+
+
+# IMPORTANT:
+# If ANY future operation modifies inventory (returns, cancellations,
+# manual adjustments, bulk imports, etc.), on_inventory_change() MUST
+# be called to keep the public API cache in sync.
+def on_inventory_change():
+    """Call this from ANY code path that modifies stock levels."""
+    invalidate_public_cache()
 
 
 # ======================== INTERNAL HELPERS ========================
@@ -98,9 +103,9 @@ def _build_row_response(row) -> PublicProductResponse:
     qty = row.stock_quantity  # Already COALESCED to 0 in SQL
     threshold = row.low_stock_threshold or 5
 
-    # last_updated_at: use the most recent timestamp available
-    # Maps from products.updated_at — no duplicate column needed
-    last_updated = row.inventory_updated_at or row.product_updated_at
+    # last_updated_at: product.updated_at is the canonical source of truth
+    # Only fall back to inventory.updated_at if product.updated_at is NULL
+    last_updated = row.product_updated_at or row.inventory_updated_at
 
     return PublicProductResponse(
         id=row.id,
@@ -156,7 +161,12 @@ def get_public_products(
     """
     Public endpoint — real-time product availability.
     No auth required. cost_price excluded. Multi-tenant safe.
+    store_id is REQUIRED to prevent cross-tenant data leaks.
     """
+    # --- Multi-tenant safety: store_id is mandatory ---
+    if not store_id:
+        raise HTTPException(status_code=400, detail="store_id is required")
+
     # --- Cache check ---
     key = _cache_key(store_id, search, category, availability, limit, offset)
     cached = _get_cached(key)
@@ -166,9 +176,8 @@ def get_public_products(
     # --- Build query ---
     query = _base_query(db)
 
-    # Multi-tenant safety: enforce store_id filter
-    if store_id:
-        query = query.filter(Product.shop_id == store_id)
+    # Multi-tenant safety: ALL queries enforce shop_id
+    query = query.filter(Product.shop_id == store_id)
 
     if search:
         search_term = f"%{search}%"

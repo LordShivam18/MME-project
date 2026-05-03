@@ -13,7 +13,7 @@ from database import get_db, SessionLocal
 from models import core as models
 from schemas import core as schemas
 from services.prediction_service import get_product_prediction, invalidate_prediction_cache
-from routers.public import invalidate_public_cache
+from routers.public import on_inventory_change
 from limiter import limiter
 from auth import get_current_user, pwd_context, create_access_token, create_refresh_token, decode_token, require_platform_admin
 from fastapi.security import OAuth2PasswordRequestForm
@@ -507,7 +507,7 @@ def record_sale(payload: schemas.SalesCreate, background_tasks: BackgroundTasks,
         db.refresh(inventory)
 
         # Invalidate public API cache
-        invalidate_public_cache()
+        on_inventory_change()
 
         # 🔴 PART 2: Real-time trigger (ONLY low stock)
         # Prevent duplicate notifications (e.g. within 24 hours)
@@ -608,7 +608,7 @@ def add_stock(payload: schemas.AddStockRequest, background_tasks: BackgroundTask
     db.refresh(inventory)
 
     # Invalidate public API cache
-    invalidate_public_cache()
+    on_inventory_change()
     
     # Audit (background)
     background_tasks.add_task(
