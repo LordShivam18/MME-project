@@ -14,6 +14,7 @@ const navItems = [
   { to: '/search',     icon: '🔍', label: 'Product Search' },
   { to: '/seller-dashboard', icon: '🤖', label: 'AI Negotiations' },
   { to: '/chat',       icon: '💬', label: 'Messages' },
+  { to: '/tickets',    icon: '🎫', label: 'Support Tickets' },
   { to: '/profit',     icon: '💰', label: 'Profit Analytics' },
   { section: 'System' },
   { to: '/billing',    icon: '💳', label: 'Billing' },

@@ -317,6 +317,7 @@ class Order(Base):
     organization_id = Column(Integer, ForeignKey("organizations.id"), index=True, nullable=False)
     contact_id = Column(Integer, ForeignKey("contacts.id"), index=True, nullable=True)  # nullable for negotiation orders
     negotiation_request_id = Column(Integer, ForeignKey("price_requests.id"), nullable=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), index=True, nullable=True) # Buyer who placed the order
     
     status = Column(String, default="pending", nullable=False) # pending, confirmed, shipped, delivered, cancelled
     delivery_status = Column(String, nullable=True) # processing, in_transit, etc
@@ -465,3 +466,46 @@ class Review(Base):
     __table_args__ = (
         UniqueConstraint('user_id', 'order_id', name='uix_user_order_review'),
     )
+
+
+class SupportTicket(Base):
+    __tablename__ = "support_tickets"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), index=True, nullable=False) # The buyer who created it
+    order_id = Column(Integer, ForeignKey("orders.id"), index=True, nullable=False)
+    organization_id = Column(Integer, ForeignKey("organizations.id"), index=True, nullable=False) # For seller isolation
+    issue_type = Column(String, nullable=False) # refund/damaged/wrong_item/other
+    status = Column(String, default="open", nullable=False) # open/in_progress/resolved
+    priority = Column(String, default="medium", nullable=False) # low/medium/high
+    created_at = Column(DateTime, default=datetime.utcnow)
+    closed_at = Column(DateTime, nullable=True)
+
+    # Relationships
+    order = relationship("Order")
+    user = relationship("User", foreign_keys=[user_id])
+    organization = relationship("Organization")
+    messages = relationship("TicketMessage", back_populates="ticket", cascade="all, delete-orphan")
+    events = relationship("TicketEvent", back_populates="ticket", cascade="all, delete-orphan")
+
+class TicketMessage(Base):
+    __tablename__ = "ticket_messages"
+    id = Column(Integer, primary_key=True, index=True)
+    ticket_id = Column(Integer, ForeignKey("support_tickets.id"), index=True, nullable=False)
+    sender_id = Column(Integer, ForeignKey("users.id"), nullable=False) # User ID of whoever sent it
+    message = Column(String, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    ticket = relationship("SupportTicket", back_populates="messages")
+    sender = relationship("User")
+
+class TicketEvent(Base):
+    __tablename__ = "ticket_events"
+    id = Column(Integer, primary_key=True, index=True)
+    ticket_id = Column(Integer, ForeignKey("support_tickets.id"), index=True, nullable=False)
+    old_status = Column(String, nullable=True)
+    new_status = Column(String, nullable=False)
+    changed_by = Column(Integer, ForeignKey("users.id"), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    ticket = relationship("SupportTicket", back_populates="events")
+    user = relationship("User")

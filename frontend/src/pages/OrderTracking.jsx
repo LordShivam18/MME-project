@@ -47,21 +47,82 @@ export default function OrderTracking() {
   const currentIdx = STATUS_STEPS.indexOf(currentStatus);
   const completedSteps = timeline.timeline?.map(t => t.step) || [];
 
+  const [showIssueModal, setShowIssueModal] = useState(false);
+  const [issueType, setIssueType] = useState('other');
+  const [priority, setPriority] = useState('medium');
+  const [submittingIssue, setSubmittingIssue] = useState(false);
+
+  const handleReportIssue = async (e) => {
+    e.preventDefault();
+    setSubmittingIssue(true);
+    try {
+      const res = await axiosClient.post('/api/v1/tickets', {
+        order_id: parseInt(orderId),
+        issue_type: issueType,
+        priority: priority
+      });
+      setShowIssueModal(false);
+      navigate(`/tickets/${res.data.id}`);
+    } catch (err) {
+      alert(err.response?.data?.detail || 'Failed to create ticket');
+    } finally {
+      setSubmittingIssue(false);
+    }
+  };
+
   return (
     <div style={s.page}>
       <button onClick={() => navigate(-1)} style={s.backBtn}>← Back</button>
       
       <div style={s.header}>
-        <h1 style={s.title}>Order #{timeline.order_id}</h1>
-        <span style={{
-          ...s.statusBadge,
-          backgroundColor: (STATUS_COLORS[currentStatus] || '#94a3b8') + '18',
-          color: STATUS_COLORS[currentStatus] || '#94a3b8',
-          borderColor: STATUS_COLORS[currentStatus] || '#94a3b8',
-        }}>
-          {currentStatus?.toUpperCase()}
-        </span>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+          <h1 style={s.title}>Order #{timeline.order_id}</h1>
+          <span style={{
+            ...s.statusBadge,
+            backgroundColor: (STATUS_COLORS[currentStatus] || '#94a3b8') + '18',
+            color: STATUS_COLORS[currentStatus] || '#94a3b8',
+            borderColor: STATUS_COLORS[currentStatus] || '#94a3b8',
+            alignSelf: 'flex-start'
+          }}>
+            {currentStatus?.toUpperCase()}
+          </span>
+        </div>
+        <button onClick={() => setShowIssueModal(true)} style={s.issueBtn}>⚠️ Report Issue</button>
       </div>
+
+      {showIssueModal && (
+        <div style={s.modalOverlay}>
+          <div style={s.modal}>
+            <h2 style={{ margin: '0 0 1rem 0' }}>Report an Issue</h2>
+            <form onSubmit={handleReportIssue}>
+              <div style={{ marginBottom: '1rem' }}>
+                <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600 }}>Issue Type</label>
+                <select value={issueType} onChange={(e) => setIssueType(e.target.value)} style={s.select}>
+                  <option value="refund">Request Refund</option>
+                  <option value="damaged">Damaged Item</option>
+                  <option value="wrong_item">Wrong Item Received</option>
+                  <option value="delayed">Delivery Delayed</option>
+                  <option value="other">Other</option>
+                </select>
+              </div>
+              <div style={{ marginBottom: '1.5rem' }}>
+                <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600 }}>Priority</label>
+                <select value={priority} onChange={(e) => setPriority(e.target.value)} style={s.select}>
+                  <option value="low">Low</option>
+                  <option value="medium">Medium</option>
+                  <option value="high">High</option>
+                </select>
+              </div>
+              <div style={{ display: 'flex', gap: '1rem', justifyContent: 'flex-end' }}>
+                <button type="button" onClick={() => setShowIssueModal(false)} style={s.cancelBtn}>Cancel</button>
+                <button type="submit" disabled={submittingIssue} style={s.submitBtn}>
+                  {submittingIssue ? 'Submitting...' : 'Submit Ticket'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* Progress Bar */}
       {!isCancelled && !isReturned && (
@@ -145,4 +206,10 @@ const s = {
   timelineDot: { width: '12px', height: '12px', borderRadius: '50%', flexShrink: 0, marginTop: '4px' },
   timelineLine: { position: 'absolute', left: '5px', top: '18px', width: '2px', height: 'calc(100% - 16px)', backgroundColor: '#e2e8f0' },
   timelineContent: { display: 'flex', flexDirection: 'column', gap: '2px' },
+  issueBtn: { backgroundColor: '#fee2e2', color: '#dc2626', border: '1px solid #f87171', padding: '0.5rem 1rem', borderRadius: '8px', fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.5rem' },
+  modalOverlay: { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 },
+  modal: { backgroundColor: '#fff', borderRadius: '12px', padding: '2rem', width: '100%', maxWidth: '400px', boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)' },
+  select: { width: '100%', padding: '0.75rem', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '1rem', outline: 'none' },
+  cancelBtn: { padding: '0.5rem 1rem', border: '1px solid #cbd5e1', backgroundColor: '#fff', borderRadius: '6px', fontWeight: 600, cursor: 'pointer' },
+  submitBtn: { padding: '0.5rem 1rem', border: 'none', backgroundColor: '#3b82f6', color: '#fff', borderRadius: '6px', fontWeight: 600, cursor: 'pointer' }
 };

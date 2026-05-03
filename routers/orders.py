@@ -361,10 +361,12 @@ def update_order_status(order_id: int, payload: schemas.OrderUpdateStatus, db: S
 @router.get("/orders/{order_id}/timeline")
 def get_order_timeline(order_id: int, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     """Get full status timeline for an order."""
+    from sqlalchemy import or_
     org_id = _org_id(current_user)
+    user_id = current_user.get("user_id")
     order = db.query(models.Order).filter(
         models.Order.id == order_id,
-        models.Order.organization_id == org_id,
+        or_(models.Order.organization_id == org_id, models.Order.user_id == user_id),
         models.Order.is_deleted == False
     ).first()
     if not order:

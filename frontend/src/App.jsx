@@ -18,6 +18,8 @@ import Marketplace from './pages/Marketplace';
 import OrderTracking from './pages/OrderTracking';
 import SellerDashboard from './pages/SellerDashboard';
 import SearchBar from './pages/SearchBar';
+import SupportTickets from './pages/SupportTickets';
+import TicketChat from './pages/TicketChat';
 import Layout from './components/Layout';
 
 function App() {
@@ -149,6 +151,18 @@ function App() {
         <Route path="/search" element={
           <ProtectedWithLayout>
             <SearchBar />
+          </ProtectedWithLayout>
+        } />
+
+        <Route path="/tickets" element={
+          <ProtectedWithLayout>
+            <SupportTickets />
+          </ProtectedWithLayout>
+        } />
+
+        <Route path="/tickets/:ticketId" element={
+          <ProtectedWithLayout>
+            <TicketChat />
           </ProtectedWithLayout>
         } />
 

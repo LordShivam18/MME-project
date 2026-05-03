@@ -627,7 +627,7 @@ def create_order_from_negotiation(
     # Row-level lock to prevent duplicate order creation
     price_req = (
         db.query(models.PriceRequest)
-        .filter(models.PriceRequest.id == request_id, models.PriceRequest.shop_id == org_id)
+        .filter(models.PriceRequest.id == request_id, models.PriceRequest.user_id == user_id)
         .with_for_update()
         .first()
     )
@@ -680,9 +680,10 @@ def create_order_from_negotiation(
 
     # Create order
     order = models.Order(
-        organization_id=org_id,
+        organization_id=price_req.shop_id, # Seller's org!
         contact_id=None,
         negotiation_request_id=price_req.id,
+        user_id=price_req.user_id,
         status="confirmed",
         total_amount=total,
     )

@@ -269,6 +269,9 @@ async def lifespan(app: FastAPI):
                 pass  # Extension may not be available in all environments
             # --- Verified reviews ---
             conn.execute(text("ALTER TABLE reviews ADD COLUMN IF NOT EXISTS verified_purchase BOOLEAN DEFAULT FALSE"))
+            # --- Support Tickets ---
+            conn.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_orders_user ON orders (user_id)"))
             conn.commit()
         logger.info("Migration check complete: all columns, indexes, and tables ensured")
     except Exception as e:
@@ -490,6 +493,10 @@ logger.info("✅ Public routes registered: /api/v1/public/*")
 from routers import pricing
 app.include_router(pricing.router, prefix="/api/v1")
 logger.info("✅ Pricing routes registered: /api/v1/pricing/*")
+
+from routers import tickets
+app.include_router(tickets.router, prefix="/api/v1")
+logger.info("✅ Ticket routes registered: /api/v1/tickets/*")
 
 # ---------------- HEALTH CHECK ----------------
 @app.get("/health")

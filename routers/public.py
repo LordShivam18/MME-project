@@ -575,8 +575,9 @@ def create_review(
     # FIX 4: Determine verified_purchase
     is_verified = False
     if payload.order_id:
-        order_check = db.query(Order).filter(
-            Order.id == payload.order_id, Order.user_id == user_id, Order.status == "delivered"
+        from models.core import PriceRequest
+        order_check = db.query(Order).join(PriceRequest, Order.negotiation_request_id == PriceRequest.id).filter(
+            Order.id == payload.order_id, PriceRequest.user_id == user_id, Order.status == "delivered"
         ).first()
         is_verified = order_check is not None
 
