@@ -367,7 +367,8 @@ def validate_token(request: Request, db: Session = Depends(get_db), current_user
         "organization": {
             "id": org.id,
             "name": org.name,
-            "ai_decision_mode": org.ai_decision_mode
+            "ai_decision_mode": org.ai_decision_mode,
+            "is_public": org.is_public,
         } if org else None
     }
 
@@ -833,6 +834,39 @@ def update_ai_decision_mode(request: Request, payload: schemas.OrganizationModeU
     
     return org
 
+
+# ============================================================
+# STORE VISIBILITY CONTROL
+# ============================================================
+@router.patch("/organization/visibility")
+@limiter.limit("10/minute")
+def update_store_visibility(request: Request, body: dict, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    """Toggle organization public visibility for marketplace."""
+    require_role(current_user, ["admin"])
+    org_id = _org_id(current_user)
+    org = db.query(models.Organization).filter(models.Organization.id == org_id).first()
+    if not org:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    
+    is_public = body.get("is_public")
+    if is_public is None or not isinstance(is_public, bool):
+        raise HTTPException(status_code=400, detail="is_public must be true or false")
+    
+    org.is_public = is_public
+    
+    # Optional: update org details if provided
+    if body.get("category"):
+        org.category = body["category"]
+    if body.get("address"):
+        org.address = body["address"]
+    if body.get("phone"):
+        org.phone = body["phone"]
+    
+    db.commit()
+    return {
+        "message": f"Store visibility {'enabled' if is_public else 'disabled'}",
+        "is_public": org.is_public,
+    }
 
 # ============================================================
 # AUDIT LOGS (paginated, admin-only)

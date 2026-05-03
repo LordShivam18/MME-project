@@ -429,6 +429,70 @@ def list_price_requests(
     return query.order_by(models.PriceRequest.created_at.desc()).limit(100).all()
 
 
+# ======================== SELLER NEGOTIATION DASHBOARD ========================
+
+@router.get("/pricing/requests/dashboard")
+def seller_negotiation_dashboard(
+    db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)
+):
+    """
+    AI-assisted negotiation dashboard for sellers.
+    Returns pending requests enriched with bulk pricing, demand signals, and AI suggestions.
+    """
+    org_id = _org_id(current_user)
+    user_id = current_user.get("user_id")
+    db_user = db.query(models.User).filter(models.User.id == user_id).first() if user_id else None
+    if db_user and db_user.business_type == "customer":
+        raise HTTPException(status_code=403, detail="Customers cannot access the seller dashboard")
+
+    pending = (
+        db.query(models.PriceRequest)
+        .filter(models.PriceRequest.shop_id == org_id, models.PriceRequest.status == "pending")
+        .order_by(models.PriceRequest.created_at.desc())
+        .limit(50)
+        .all()
+    )
+
+    results = []
+    for req in pending:
+        product = db.query(models.Product).filter(models.Product.id == req.product_id).first()
+        if not product:
+            continue
+
+        bulk_ppu, _, _ = PricingEngine.get_bulk_price(db, product, req.quantity)
+        ai_ctx = PricingEngine.get_ai_context(db, product)
+
+        margin_impact = round((bulk_ppu - req.requested_price) / bulk_ppu, 4) if bulk_ppu > 0 else 0.0
+
+        # AI suggestion logic
+        if ai_ctx.demand_score > 0.8:
+            ai_suggestion = "Reject — high demand, keep price firm"
+            risk_level = "risky"
+        elif ai_ctx.demand_score < 0.2:
+            ai_suggestion = "Accept — low demand, clear inventory"
+            risk_level = "safe"
+        else:
+            ai_suggestion = "Negotiate — counter with slight discount"
+            risk_level = "moderate"
+
+        results.append({
+            "request_id": req.id,
+            "product_id": product.id,
+            "product_name": product.name,
+            "requested_price": req.requested_price,
+            "bulk_price": bulk_ppu,
+            "approved_price": req.approved_price,
+            "quantity": req.quantity,
+            "demand_score": ai_ctx.demand_score,
+            "ai_suggestion": ai_suggestion,
+            "margin_impact": margin_impact,
+            "risk_level": risk_level,
+            "created_at": req.created_at.isoformat() if req.created_at else None,
+        })
+
+    return results
+
+
 @router.patch("/price-request/{request_id}", response_model=PriceRequestResponse)
 def respond_to_price_request(
     request_id: int, payload: PriceRequestUpdate,

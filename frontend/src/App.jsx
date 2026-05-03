@@ -16,6 +16,8 @@ import Chat from './pages/Chat';
 import CompleteProfile from './pages/CompleteProfile';
 import Marketplace from './pages/Marketplace';
 import OrderTracking from './pages/OrderTracking';
+import SellerDashboard from './pages/SellerDashboard';
+import SearchBar from './pages/SearchBar';
 import Layout from './components/Layout';
 
 function App() {
@@ -135,6 +137,18 @@ function App() {
         <Route path="/orders/:orderId" element={
           <ProtectedWithLayout>
             <OrderTracking />
+          </ProtectedWithLayout>
+        } />
+
+        <Route path="/seller-dashboard" element={
+          <ProtectedWithLayout>
+            <SellerDashboard />
+          </ProtectedWithLayout>
+        } />
+
+        <Route path="/search" element={
+          <ProtectedWithLayout>
+            <SearchBar />
           </ProtectedWithLayout>
         } />
 

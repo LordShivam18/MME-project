@@ -243,19 +243,20 @@ class PublicStoreResponse(BaseModel):
         from_attributes = True
 
 
-@router.get("/public/stores", response_model=List[PublicStoreResponse])
+@router.get("/public/stores")
 def list_public_stores(
     category: Optional[str] = None,
     search: Optional[str] = None,
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
 ):
     """
-    Public store directory. Returns only organizations where is_public=TRUE and has products.
-    No auth required.
+    Public store directory with pagination.
+    Returns only organizations where is_public=TRUE and has products.
     """
     from sqlalchemy import func as sqlfunc
 
-    # Subquery: count products per org
     product_count_sq = (
         db.query(
             Product.shop_id,
@@ -266,7 +267,7 @@ def list_public_stores(
         .subquery()
     )
 
-    query = (
+    base_query = (
         db.query(
             Organization.id,
             Organization.name,
@@ -283,19 +284,136 @@ def list_public_stores(
     )
 
     if category:
-        query = query.filter(Organization.category.ilike(f"%{category}%"))
+        base_query = base_query.filter(Organization.category.ilike(f"%{category}%"))
     if search:
-        query = query.filter(Organization.name.ilike(f"%{search}%"))
+        base_query = base_query.filter(Organization.name.ilike(f"%{search}%"))
 
-    # Only stores with at least 1 product
-    query = query.having(sqlfunc.coalesce(product_count_sq.c.product_count, 0) > 0)
-    rows = query.order_by(Organization.name.asc()).limit(100).all()
+    # Only stores with products
+    base_query = base_query.having(sqlfunc.coalesce(product_count_sq.c.product_count, 0) > 0)
 
-    return [
-        PublicStoreResponse(
-            id=r.id, name=r.name or "",
-            category=r.category, address=r.address, phone=r.phone,
-            product_count=r.product_count,
+    # Count total
+    count_query = base_query.subquery()
+    total_count = db.query(sqlfunc.count()).select_from(count_query).scalar() or 0
+
+    rows = base_query.order_by(Organization.name.asc()).offset(offset).limit(limit).all()
+
+    return {
+        "total_count": total_count,
+        "stores": [
+            PublicStoreResponse(
+                id=r.id, name=r.name or "",
+                category=r.category, address=r.address, phone=r.phone,
+                product_count=r.product_count,
+            ).model_dump()
+            for r in rows
+        ],
+    }
+
+
+# ======================== PUBLIC PRODUCT SEARCH ========================
+
+class SearchProductResponse(BaseModel):
+    product_id: int
+    name: str = ""
+    category: str = ""
+    price: float = 0.0
+    availability: str = "out_of_stock"
+    stock_quantity: int = 0
+    store_name: str = ""
+    store_id: int = 0
+    demand_score: float = 0.0
+    relevance_score: float = 0.0
+
+    class Config:
+        from_attributes = True
+
+
+@router.get("/public/search", response_model=List[SearchProductResponse])
+def search_products(
+    q: Optional[str] = None,
+    category: Optional[str] = None,
+    min_price: Optional[float] = Query(None, ge=0),
+    max_price: Optional[float] = Query(None, ge=0),
+    store_id: Optional[int] = None,
+    sort_by: Optional[str] = Query("relevance", pattern="^(relevance|price_asc|price_desc|demand)$"),
+    limit: int = Query(30, ge=1, le=100),
+    db: Session = Depends(get_db),
+):
+    """
+    Public product search with filters and AI-powered ranking.
+    Only returns products from public stores.
+    """
+    from sqlalchemy import func as sqlfunc, case
+    from models.core import ProductInsight
+
+    # Base: products from public orgs only
+    query = (
+        db.query(
+            Product.id.label("product_id"),
+            Product.name,
+            Product.category,
+            Product.selling_price.label("price"),
+            sqlfunc.coalesce(Inventory.quantity_on_hand, 0).label("stock_quantity"),
+            Organization.name.label("store_name"),
+            Organization.id.label("store_id"),
+            sqlfunc.coalesce(ProductInsight.predicted_daily_demand, 0.0).label("raw_demand"),
         )
-        for r in rows
-    ]
+        .join(Organization, Product.shop_id == Organization.id)
+        .outerjoin(Inventory, (Inventory.product_id == Product.id) & (Inventory.shop_id == Product.shop_id))
+        .outerjoin(ProductInsight, ProductInsight.product_id == Product.id)
+        .filter(
+            Organization.is_public == True,
+            Organization.is_deleted == False,
+            Product.is_deleted == False,
+        )
+    )
+
+    # Filters
+    if q:
+        query = query.filter(Product.name.ilike(f"%{q}%"))
+    if category:
+        query = query.filter(Product.category.ilike(f"%{category}%"))
+    if min_price is not None:
+        query = query.filter(Product.selling_price >= min_price)
+    if max_price is not None:
+        query = query.filter(Product.selling_price <= max_price)
+    if store_id:
+        query = query.filter(Product.shop_id == store_id)
+
+    rows = query.limit(limit).all()
+
+    # Compute scores and rank
+    results = []
+    for r in rows:
+        stock = r.stock_quantity or 0
+        demand_score = min((r.raw_demand or 0) / 100.0, 1.0)
+        availability = get_availability(stock, 5)
+        avail_score = 1.0 if availability == "in_stock" else (0.5 if availability == "low_stock" else 0.0)
+        price_val = r.price or 0
+        price_score = max(0, 1.0 - (price_val / 10000.0))  # Normalize: cheaper = higher score
+        relevance = round(0.5 * demand_score + 0.3 * avail_score + 0.2 * price_score, 3)
+
+        results.append(SearchProductResponse(
+            product_id=r.product_id,
+            name=r.name or "",
+            category=r.category or "",
+            price=price_val,
+            availability=availability,
+            stock_quantity=stock,
+            store_name=r.store_name or "",
+            store_id=r.store_id,
+            demand_score=round(demand_score, 3),
+            relevance_score=relevance,
+        ))
+
+    # Sort
+    if sort_by == "price_asc":
+        results.sort(key=lambda x: x.price)
+    elif sort_by == "price_desc":
+        results.sort(key=lambda x: x.price, reverse=True)
+    elif sort_by == "demand":
+        results.sort(key=lambda x: x.demand_score, reverse=True)
+    else:
+        results.sort(key=lambda x: x.relevance_score, reverse=True)
+
+    return results

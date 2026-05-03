@@ -127,6 +127,51 @@ export default function Settings() {
         </div>
       </div>
 
+      {/* Store Visibility Section */}
+      {user?.role === 'admin' && (
+        <div style={{ padding: '2rem', marginTop: '2rem', backgroundColor: '#f8fafc', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
+          <h2 style={{ margin: '0 0 1.5rem 0', color: '#0f172a' }}>Store Visibility</h2>
+          <div style={cardStyle}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <strong style={{ color: '#1e293b' }}>Make my store visible to customers</strong>
+                <p style={{ color: '#64748b', fontSize: '0.85rem', margin: '0.25rem 0 0 0' }}>
+                  When enabled, your store and products appear in the public marketplace.
+                </p>
+              </div>
+              <label style={{ position: 'relative', display: 'inline-block', width: '50px', height: '28px', cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={org?.is_public || false}
+                  onChange={async (e) => {
+                    try {
+                      await axiosClient.patch('/api/v1/organization/visibility', { is_public: e.target.checked });
+                      setOrg(prev => ({ ...prev, is_public: e.target.checked }));
+                      setSuccess(e.target.checked ? 'Store is now public!' : 'Store is now private');
+                      setTimeout(() => setSuccess(null), 3000);
+                    } catch (err) {
+                      setError(err.response?.data?.detail || 'Failed to update visibility');
+                    }
+                  }}
+                  style={{ opacity: 0, width: 0, height: 0 }}
+                />
+                <span style={{
+                  position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+                  backgroundColor: org?.is_public ? '#10b981' : '#cbd5e1',
+                  borderRadius: '14px', transition: 'all 0.3s',
+                }}>
+                  <span style={{
+                    position: 'absolute', content: '""', height: '22px', width: '22px',
+                    left: org?.is_public ? '25px' : '3px', bottom: '3px',
+                    backgroundColor: '#fff', borderRadius: '50%', transition: 'all 0.3s',
+                  }} />
+                </span>
+              </label>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* AI Settings Section */}
       <div style={{ padding: '2rem', marginTop: '2rem', backgroundColor: '#f8fafc', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
         <h2 style={{ margin: '0 0 1.5rem 0', color: '#0f172a' }}>Organization Settings</h2>

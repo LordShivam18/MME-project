@@ -11,6 +11,8 @@ const navItems = [
   { section: 'Business' },
   { to: '/contacts',   icon: '🤝', label: 'CRM & Orders' },
   { to: '/marketplace', icon: '🏪', label: 'Marketplace' },
+  { to: '/search',     icon: '🔍', label: 'Product Search' },
+  { to: '/seller-dashboard', icon: '🤖', label: 'AI Negotiations' },
   { to: '/chat',       icon: '💬', label: 'Messages' },
   { to: '/profit',     icon: '💰', label: 'Profit Analytics' },
   { section: 'System' },

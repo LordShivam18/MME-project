@@ -24,6 +24,7 @@ class ConversationCreate(BaseModel):
 class MessageCreate(BaseModel):
     conversation_id: int
     content: str = Field(..., min_length=1, max_length=2048)
+    order_id: Optional[int] = None
 
 class MessageResponse(BaseModel):
     id: int
@@ -163,6 +164,7 @@ def get_messages(conversation_id: int, db: Session = Depends(get_db), current_us
             "sender_email": m.sender.email if m.sender else None,
             "content": m.content,
             "is_read": m.is_read,
+            "order_id": m.order_id,
             "created_at": m.created_at
         })
     
@@ -190,7 +192,8 @@ def send_message(payload: MessageCreate, db: Session = Depends(get_db), current_
     msg = models.Message(
         conversation_id=payload.conversation_id,
         sender_user_id=current_user["user_id"],
-        content=clean_content
+        content=clean_content,
+        order_id=payload.order_id,
     )
     db.add(msg)
     
@@ -206,6 +209,7 @@ def send_message(payload: MessageCreate, db: Session = Depends(get_db), current_
         "sender_user_id": msg.sender_user_id,
         "content": msg.content,
         "is_read": msg.is_read,
+        "order_id": msg.order_id,
         "created_at": msg.created_at
     }
 

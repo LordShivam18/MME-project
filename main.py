@@ -241,6 +241,8 @@ async def lifespan(app: FastAPI):
                 )
             """))
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_user_kyc_user ON user_kyc (user_id)"))
+            # --- Chat ↔ Order link ---
+            conn.execute(text("ALTER TABLE messages ADD COLUMN IF NOT EXISTS order_id INTEGER REFERENCES orders(id)"))
             conn.commit()
         logger.info("Migration check complete: all columns, indexes, and tables ensured")
     except Exception as e:

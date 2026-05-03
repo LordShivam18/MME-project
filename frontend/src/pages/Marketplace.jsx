@@ -20,7 +20,7 @@ export default function Marketplace() {
     try {
       const params = q ? `?search=${encodeURIComponent(q)}` : '';
       const res = await axiosClient.get(`/api/v1/public/stores${params}`);
-      setStores(res.data);
+      setStores(res.data?.stores || []);
     } catch (err) {
       setError('Failed to load stores');
     } finally {

@@ -217,6 +217,7 @@ class Message(Base):
     sender_user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     content = Column(String(2048), nullable=False)
     is_read = Column(Boolean, default=False)
+    order_id = Column(Integer, ForeignKey("orders.id"), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     # Relationships

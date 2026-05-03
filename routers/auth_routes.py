@@ -488,7 +488,7 @@ class CompleteProfilePayload(BaseModel):
     business_type: str = Field(..., pattern="^(supplier|wholesaler|retailer|customer|other)$")
     custom_role: Optional[str] = None
     full_name: str = Field(..., min_length=2, max_length=200)
-    age: Optional[int] = Field(None, ge=13, le=120)
+    age: Optional[int] = Field(None, ge=18, le=120)
     phone: Optional[str] = None
     address: Optional[str] = None
 
@@ -504,6 +504,15 @@ def complete_profile(payload: CompleteProfilePayload, db: Session = Depends(get_
 
         if user.kyc_complete:
             return {"message": "Profile already completed", "kyc_complete": True}
+
+        # --- KYC Validation ---
+        if payload.age is not None and payload.age < 18:
+            raise HTTPException(status_code=400, detail="Age must be 18 or older")
+
+        if payload.phone:
+            clean_phone = payload.phone.replace(" ", "").replace("-", "").replace("+", "")
+            if not clean_phone.isdigit() or len(clean_phone) < 10:
+                raise HTTPException(status_code=400, detail="Phone must be at least 10 digits")
 
         # Determine business type
         btype = payload.custom_role if payload.business_type == "other" and payload.custom_role else payload.business_type
