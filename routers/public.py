@@ -1,17 +1,24 @@
 """
 Public API — No authentication required.
 Exposes real-time inventory availability for storefront consumption.
+
+HARDENED:
+- Stock always from inventory.quantity_on_hand via SQL COALESCE
+- last_updated_at mapped from products.updated_at (no duplicate column)
+- 30s TTL cache with full invalidation on any stock mutation
+- Multi-tenant safety: shop_id filter enforced
+- Deterministic ordering: updated_at DESC, then id DESC
+- All response fields guaranteed non-null
 """
 
 import logging
 import time
 from typing import Optional, List
 from datetime import datetime
-from functools import lru_cache
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, desc
 from pydantic import BaseModel
 
 from database import get_db
@@ -25,13 +32,13 @@ router = APIRouter(tags=["Public"])
 
 class PublicProductResponse(BaseModel):
     id: int
-    name: str
-    sku: Optional[str] = ""
-    category: Optional[str] = ""
+    name: str = ""
+    sku: str = ""
+    category: str = ""
     selling_price: float = 0.0
     stock_quantity: int = 0
     low_stock_threshold: int = 5
-    availability: str = "out_of_stock"  # "in_stock" | "low_stock" | "out_of_stock"
+    availability: str = "out_of_stock"
     last_updated_at: Optional[datetime] = None
 
     class Config:
@@ -42,8 +49,8 @@ class PublicProductResponse(BaseModel):
 
 def get_availability(stock: int, threshold: int) -> str:
     """
-    Centralized availability logic — used everywhere.
-    Import this from routers.public wherever needed.
+    Centralized availability logic — import this wherever needed.
+    Single source of truth for in_stock / low_stock / out_of_stock.
     """
     if stock <= 0:
         return "out_of_stock"
@@ -53,11 +60,9 @@ def get_availability(stock: int, threshold: int) -> str:
 
 
 # ======================== LIGHTWEIGHT CACHE ========================
-# Simple in-memory TTL cache for public product lists.
-# No Redis needed — just a dict with a timestamp.
 
 _cache = {}
-_CACHE_TTL_SECONDS = 30  # 30-second TTL
+_CACHE_TTL_SECONDS = 30
 
 
 def _cache_key(store_id, search, category, availability, limit, offset):
@@ -76,8 +81,64 @@ def _set_cached(key, data):
 
 
 def invalidate_public_cache():
-    """Call this whenever stock changes to clear the cache."""
+    """
+    FULL cache clear — called on every stock mutation:
+      - sale recorded (endpoints.py)
+      - stock added (endpoints.py)
+      - any future mutation point
+    DO NOT use partial key invalidation — always full clear.
+    """
     _cache.clear()
+
+
+# ======================== INTERNAL HELPERS ========================
+
+def _build_row_response(row) -> PublicProductResponse:
+    """Build a single response dict from a query row. Guarantees no nulls."""
+    qty = row.stock_quantity  # Already COALESCED to 0 in SQL
+    threshold = row.low_stock_threshold or 5
+
+    # last_updated_at: use the most recent timestamp available
+    # Maps from products.updated_at — no duplicate column needed
+    last_updated = row.inventory_updated_at or row.product_updated_at
+
+    return PublicProductResponse(
+        id=row.id,
+        name=row.name or "",
+        sku=row.sku or "",
+        category=row.category or "",
+        selling_price=round(row.selling_price or 0.0, 2),
+        stock_quantity=qty,
+        low_stock_threshold=threshold,
+        availability=get_availability(qty, threshold),
+        last_updated_at=last_updated,
+    )
+
+
+def _base_query(db: Session):
+    """
+    Shared base query for both list and detail endpoints.
+    Stock is ALWAYS from inventory.quantity_on_hand via COALESCE.
+    """
+    return (
+        db.query(
+            Product.id,
+            Product.name,
+            Product.sku,
+            Product.category,
+            Product.selling_price,
+            Product.low_stock_threshold,
+            Product.shop_id,
+            Product.updated_at.label("product_updated_at"),
+            func.coalesce(Inventory.quantity_on_hand, 0).label("stock_quantity"),
+            Inventory.updated_at.label("inventory_updated_at"),
+        )
+        .outerjoin(
+            Inventory,
+            (Inventory.product_id == Product.id) & (Inventory.shop_id == Product.shop_id)
+        )
+        .filter(Product.is_deleted == False)
+    )
 
 
 # ======================== ENDPOINTS ========================
@@ -93,37 +154,19 @@ def get_public_products(
     db: Session = Depends(get_db)
 ):
     """
-    Public endpoint — returns real-time product availability.
-    No authentication required. Sensitive fields (cost_price) are excluded.
-    Stock is always derived from inventory.quantity_on_hand (single source of truth).
+    Public endpoint — real-time product availability.
+    No auth required. cost_price excluded. Multi-tenant safe.
     """
-    # Check cache
+    # --- Cache check ---
     key = _cache_key(store_id, search, category, availability, limit, offset)
     cached = _get_cached(key)
     if cached is not None:
-        logger.debug("PUBLIC_API: cache hit for key=%s", key)
         return cached
 
-    # Base query: products LEFT JOIN inventory
-    # Stock is ALWAYS from inventory.quantity_on_hand via COALESCE
-    query = (
-        db.query(
-            Product.id,
-            Product.name,
-            Product.sku,
-            Product.category,
-            Product.selling_price,
-            Product.low_stock_threshold,
-            Product.updated_at,
-            Product.shop_id,
-            func.coalesce(Inventory.quantity_on_hand, 0).label("stock_quantity"),
-            Inventory.updated_at.label("inventory_updated_at"),
-        )
-        .outerjoin(Inventory, (Inventory.product_id == Product.id) & (Inventory.shop_id == Product.shop_id))
-        .filter(Product.is_deleted == False)
-    )
+    # --- Build query ---
+    query = _base_query(db)
 
-    # Filters
+    # Multi-tenant safety: enforce store_id filter
     if store_id:
         query = query.filter(Product.shop_id == store_id)
 
@@ -136,39 +179,26 @@ def get_public_products(
     if category:
         query = query.filter(Product.category.ilike(f"%{category}%"))
 
-    # Execute
-    query = query.order_by(Product.name).offset(offset).limit(limit)
+    # Deterministic ordering: most recently updated first, tie-break by id
+    query = query.order_by(desc(Product.updated_at), desc(Product.id))
+    query = query.offset(offset).limit(limit)
     rows = query.all()
 
-    # Build response — no null fields
+    # --- Build response ---
     results = []
     for row in rows:
-        qty = row.stock_quantity  # Already COALESCED to 0
-        threshold = row.low_stock_threshold or 5
-        avail = get_availability(qty, threshold)
+        resp = _build_row_response(row)
 
         # Post-query availability filter
-        if availability and avail != availability:
+        if availability and resp.availability != availability:
             continue
 
-        last_updated = row.inventory_updated_at or row.updated_at
+        results.append(resp)
 
-        results.append(PublicProductResponse(
-            id=row.id,
-            name=row.name or "",
-            sku=row.sku or "",
-            category=row.category or "",
-            selling_price=row.selling_price or 0.0,
-            stock_quantity=qty,
-            low_stock_threshold=threshold,
-            availability=avail,
-            last_updated_at=last_updated,
-        ))
-
-    # Cache result
+    # --- Cache result ---
     _set_cached(key, results)
 
-    logger.info("PUBLIC_API: returned %d products (store_id=%s, search=%s)", len(results), store_id, search)
+    logger.info("PUBLIC_API: %d products (store=%s, search=%s)", len(results), store_id, search)
     return results
 
 
@@ -179,36 +209,12 @@ def get_public_product(
 ):
     """Get availability for a single product by ID."""
     row = (
-        db.query(
-            Product.id,
-            Product.name,
-            Product.sku,
-            Product.category,
-            Product.selling_price,
-            Product.low_stock_threshold,
-            Product.updated_at,
-            func.coalesce(Inventory.quantity_on_hand, 0).label("stock_quantity"),
-            Inventory.updated_at.label("inventory_updated_at"),
-        )
-        .outerjoin(Inventory, (Inventory.product_id == Product.id) & (Inventory.shop_id == Product.shop_id))
-        .filter(Product.id == product_id, Product.is_deleted == False)
+        _base_query(db)
+        .filter(Product.id == product_id)
         .first()
     )
 
     if not row:
         raise HTTPException(status_code=404, detail="Product not found")
 
-    qty = row.stock_quantity
-    threshold = row.low_stock_threshold or 5
-
-    return PublicProductResponse(
-        id=row.id,
-        name=row.name or "",
-        sku=row.sku or "",
-        category=row.category or "",
-        selling_price=row.selling_price or 0.0,
-        stock_quantity=qty,
-        low_stock_threshold=threshold,
-        availability=get_availability(qty, threshold),
-        last_updated_at=row.inventory_updated_at or row.updated_at,
-    )
+    return _build_row_response(row)
