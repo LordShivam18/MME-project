@@ -25,10 +25,13 @@ export default function SearchBar() {
   const [isLoading, setIsLoading] = useState(false);
   const [searched, setSearched] = useState(false);
 
+  const [fallbackMsg, setFallbackMsg] = useState(null);
+
   const handleSearch = async (e) => {
     if (e) e.preventDefault();
     setIsLoading(true);
     setSearched(true);
+    setFallbackMsg(null);
     try {
       const params = new URLSearchParams();
       if (query) params.set('q', query);
@@ -39,7 +42,13 @@ export default function SearchBar() {
       params.set('limit', '30');
 
       const res = await axiosClient.get(`/api/v1/public/search?${params.toString()}`);
-      setResults(res.data);
+      // Handle both normal (array) and fallback (object with results) responses
+      if (res.data?.fallback_used) {
+        setResults(res.data.results || []);
+        setFallbackMsg(res.data.message);
+      } else {
+        setResults(Array.isArray(res.data) ? res.data : []);
+      }
     } catch (err) {
       console.error(err);
     } finally {
@@ -102,6 +111,11 @@ export default function SearchBar() {
       {/* Results */}
       {isLoading ? <LoadingSpinner /> : (
         <>
+          {fallbackMsg && (
+            <div style={{ padding: '0.75rem 1rem', marginBottom: '1rem', backgroundColor: '#fef3c7', border: '1px solid #fde68a', borderRadius: '8px', color: '#92400e', fontSize: '0.9rem', fontWeight: 600 }}>
+              💡 {fallbackMsg}
+            </div>
+          )}
           {searched && (
             <div style={{ marginBottom: '1rem', fontSize: '0.9rem', color: '#64748b' }}>
               {results.length} product{results.length !== 1 ? 's' : ''} found

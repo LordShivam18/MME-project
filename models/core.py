@@ -455,6 +455,7 @@ class Review(Base):
     product_id = Column(Integer, ForeignKey("products.id"), nullable=True, index=True)
     rating = Column(Integer, nullable=False)  # 1-5
     comment = Column(String(1000), nullable=True)
+    verified_purchase = Column(Boolean, default=False, nullable=False, server_default="false")
     created_at = Column(DateTime, default=datetime.utcnow)
 
     # Relationships

@@ -346,7 +346,7 @@ def update_order_status(order_id: int, payload: schemas.OrderUpdateStatus, db: S
         notif = models.Notification(
             organization_id=org_id,
             type="order_update",
-            priority="medium" if order.status in ["shipped", "delivered"] else "low",
+            priority="high" if order.status in ["shipped", "delivered"] else "medium",
             message=f"Order #{order.id} status changed to {order.status}."
         )
         db.add(notif)

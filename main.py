@@ -267,6 +267,8 @@ async def lifespan(app: FastAPI):
                 conn.execute(text("CREATE INDEX IF NOT EXISTS idx_products_name_trgm ON products USING gin (name gin_trgm_ops)"))
             except Exception:
                 pass  # Extension may not be available in all environments
+            # --- Verified reviews ---
+            conn.execute(text("ALTER TABLE reviews ADD COLUMN IF NOT EXISTS verified_purchase BOOLEAN DEFAULT FALSE"))
             conn.commit()
         logger.info("Migration check complete: all columns, indexes, and tables ensured")
     except Exception as e:

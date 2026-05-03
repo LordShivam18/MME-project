@@ -1397,6 +1397,68 @@ def mark_all_notifications_read(db: Session = Depends(get_db), current_user: dic
     return {"message": "All notifications marked as read"}
 
 # ============================================================
+# ANALYTICS SUMMARY
+# ============================================================
+@router.get("/analytics/summary")
+def analytics_summary(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    """Lightweight analytics for business users. Scoped to user's org."""
+    org_id = _org_id(current_user)
+    user_id = current_user.get("user_id")
+
+    # Guard: only business users
+    db_user = db.query(models.User).filter(models.User.id == user_id).first()
+    if db_user and db_user.business_type == "customer":
+        raise HTTPException(status_code=403, detail="Analytics not available for customer accounts")
+
+    from sqlalchemy import func as sqlfunc
+
+    total_orders = db.query(sqlfunc.count(models.Order.id)).filter(
+        models.Order.organization_id == org_id
+    ).scalar() or 0
+
+    total_negotiations = db.query(sqlfunc.count(models.PriceRequest.id)).filter(
+        models.PriceRequest.shop_id == org_id
+    ).scalar() or 0
+
+    conversion_rate = round(total_orders / total_negotiations, 3) if total_negotiations > 0 else 0.0
+
+    avg_delta = db.query(sqlfunc.avg(models.PriceRequest.negotiation_delta)).filter(
+        models.PriceRequest.shop_id == org_id
+    ).scalar() or 0
+    avg_negotiation_delta = round(float(avg_delta), 4)
+
+    # Top 5 products by sales count
+    top_products_raw = (
+        db.query(
+            models.Order.product_id,
+            models.Product.name,
+            sqlfunc.count(models.Order.id).label("sales"),
+        )
+        .join(models.Product, models.Order.product_id == models.Product.id)
+        .filter(
+            models.Order.organization_id == org_id,
+            models.Order.status.notin_(["cancelled", "returned"]),
+        )
+        .group_by(models.Order.product_id, models.Product.name)
+        .order_by(sqlfunc.count(models.Order.id).desc())
+        .limit(5)
+        .all()
+    )
+
+    top_products = [
+        {"product_id": r.product_id, "name": r.name or "", "sales": r.sales}
+        for r in top_products_raw
+    ]
+
+    return {
+        "total_orders": total_orders,
+        "total_negotiations": total_negotiations,
+        "conversion_rate": conversion_rate,
+        "avg_negotiation_delta": avg_negotiation_delta,
+        "top_products": top_products,
+    }
+
+# ============================================================
 # PLATFORM ADMIN ENDPOINTS
 # ============================================================
 @router.get("/admin/stats")

@@ -143,6 +143,19 @@ export default function Marketplace() {
                 )}
               </div>
 
+              {/* Trust Breakdown */}
+              {store.trust_breakdown && store.trust_score > 0 && (
+                <div style={{ marginTop: '0.5rem', padding: '0.4rem 0.6rem', backgroundColor: '#f0fdf4', borderRadius: '6px', border: '1px solid #bbf7d0' }}>
+                  <div style={{ fontSize: '0.65rem', color: '#64748b', fontWeight: 600, marginBottom: '3px' }}>Why this score?</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2px', fontSize: '0.7rem', color: '#475569' }}>
+                    <span>📊 Rating: {Math.round(store.trust_breakdown.rating * 100)}%</span>
+                    <span>📦 Delivery: {Math.round(store.trust_breakdown.delivery * 100)}%</span>
+                    <span>🤝 Fairness: {Math.round(store.trust_breakdown.fairness * 100)}%</span>
+                    <span>⚡ Activity: {Math.round(store.trust_breakdown.activity * 100)}%</span>
+                  </div>
+                </div>
+              )}
+
               <div style={{ marginTop: '0.5rem', fontSize: '0.85rem', color: '#64748b' }}>
                 {store.address && <div>📍 {store.address}</div>}
                 <div style={{ marginTop: '0.5rem', fontWeight: 600, color: '#3b82f6' }}>{store.product_count} products →</div>

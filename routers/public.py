@@ -231,6 +231,12 @@ def get_public_product(
 
 # ======================== PUBLIC STORE DIRECTORY ========================
 
+class TrustBreakdown(BaseModel):
+    rating: float = 0.0
+    delivery: float = 0.0
+    fairness: float = 0.0
+    activity: float = 0.0
+
 class PublicStoreResponse(BaseModel):
     id: int
     name: str = ""
@@ -241,6 +247,7 @@ class PublicStoreResponse(BaseModel):
     rating: float = 0.0
     total_reviews: int = 0
     trust_score: float = 0.0
+    trust_breakdown: Optional[TrustBreakdown] = None
 
     class Config:
         from_attributes = True
@@ -315,19 +322,22 @@ def list_public_stores(
 
     rows = base_query.order_by(Organization.name.asc()).offset(offset).limit(limit).all()
 
+    store_list = []
+    for r in rows:
+        breakdown = _compute_trust_breakdown(db, r.id)
+        store_list.append(PublicStoreResponse(
+            id=r.id, name=r.name or "",
+            category=r.category, address=r.address, phone=r.phone,
+            product_count=r.product_count,
+            rating=round(r.avg_rating, 1),
+            total_reviews=r.total_reviews,
+            trust_score=round(r.trust_score or 0, 2),
+            trust_breakdown=breakdown,
+        ).model_dump())
+
     return {
         "total_count": total_count,
-        "stores": [
-            PublicStoreResponse(
-                id=r.id, name=r.name or "",
-                category=r.category, address=r.address, phone=r.phone,
-                product_count=r.product_count,
-                rating=round(r.avg_rating, 1),
-                total_reviews=r.total_reviews,
-                trust_score=round(r.trust_score or 0, 2),
-            ).model_dump()
-            for r in rows
-        ],
+        "stores": store_list,
     }
 
 
@@ -451,6 +461,65 @@ def search_products(
     else:
         results.sort(key=lambda x: x.relevance_score, reverse=True)
 
+    # FIX 3: Search fallback — if no results and filters were applied, relax and retry
+    fallback_used = False
+    if len(results) == 0 and (q or category or min_price is not None or max_price is not None):
+        # Retry with only text query (relax price/category)
+        fallback_query = (
+            db.query(
+                Product.id.label("product_id"),
+                Product.name,
+                Product.category,
+                Product.selling_price.label("price"),
+                sqlfunc.coalesce(Inventory.quantity_on_hand, 0).label("stock_quantity"),
+                Organization.name.label("store_name"),
+                Organization.id.label("store_id"),
+                sqlfunc.coalesce(ProductInsight.predicted_daily_demand, 0.0).label("raw_demand"),
+            )
+            .join(Organization, Product.shop_id == Organization.id)
+            .outerjoin(Inventory, (Inventory.product_id == Product.id) & (Inventory.shop_id == Product.shop_id))
+            .outerjoin(ProductInsight, ProductInsight.product_id == Product.id)
+            .filter(
+                Organization.is_public == True,
+                Organization.is_deleted == False,
+                Product.is_deleted == False,
+            )
+        )
+        # Broad fuzzy match on name or category
+        if q:
+            fallback_query = fallback_query.filter(
+                (Product.name.ilike(f"%{q}%")) | (Product.category.ilike(f"%{q}%"))
+            )
+        elif category:
+            fallback_query = fallback_query.filter(Product.category.ilike(f"%{category}%"))
+
+        fb_rows = fallback_query.limit(limit).all()
+        for r in fb_rows:
+            stock = r.stock_quantity or 0
+            demand_score = min((r.raw_demand or 0) / 100.0, 1.0)
+            availability = get_availability(stock, 5)
+            avail_score = 1.0 if availability == "in_stock" else (0.5 if availability == "low_stock" else 0.0)
+            price_val = r.price or 0
+            price_score = max(0, 1.0 - (price_val / 10000.0))
+            relevance = round(0.5 * demand_score + 0.3 * avail_score + 0.2 * price_score, 3)
+            results.append(SearchProductResponse(
+                product_id=r.product_id, name=r.name or "", category=r.category or "",
+                price=price_val, availability=availability, stock_quantity=stock,
+                store_name=r.store_name or "", store_id=r.store_id,
+                demand_score=round(demand_score, 3), relevance_score=relevance,
+                ranking_reason="Similar product",
+            ))
+        if results:
+            fallback_used = True
+            results.sort(key=lambda x: x.relevance_score, reverse=True)
+
+    if fallback_used:
+        return {
+            "fallback_used": True,
+            "message": "No exact results \u2014 showing similar products",
+            "results": [r.model_dump() for r in results],
+        }
+
     return results
 
 
@@ -503,6 +572,14 @@ def create_review(
         if existing:
             raise HE(status_code=409, detail="Already reviewed this order")
 
+    # FIX 4: Determine verified_purchase
+    is_verified = False
+    if payload.order_id:
+        order_check = db.query(Order).filter(
+            Order.id == payload.order_id, Order.user_id == user_id, Order.status == "delivered"
+        ).first()
+        is_verified = order_check is not None
+
     review = Review(
         user_id=user_id,
         store_id=payload.store_id,
@@ -510,6 +587,7 @@ def create_review(
         product_id=payload.product_id,
         rating=payload.rating,
         comment=payload.comment,
+        verified_purchase=is_verified,
     )
     db.add(review)
     db.commit()
@@ -521,6 +599,7 @@ def create_review(
     return {
         "id": review.id,
         "rating": review.rating,
+        "verified_purchase": review.verified_purchase,
         "message": "Review submitted successfully",
     }
 
@@ -556,6 +635,7 @@ def get_store_reviews(
                 "user_id": r.user_id,
                 "rating": r.rating,
                 "comment": r.comment,
+                "verified_purchase": r.verified_purchase,
                 "created_at": r.created_at,
             }
             for r in reviews
@@ -563,40 +643,47 @@ def get_store_reviews(
     }
 
 
-def _recompute_trust_score(db: Session, store_id: int):
-    """Recompute trust score for an organization after a new review."""
+def _compute_trust_breakdown(db: Session, store_id: int) -> TrustBreakdown:
+    """Compute the 4 trust signals for a store (0-1 each). Used for explainability."""
     from sqlalchemy import func as sqlfunc
+    from models.core import PriceRequest
 
-    org = db.query(Organization).filter(Organization.id == store_id).first()
-    if not org:
-        return
-
-    # Signal 1: Rating (40%)
     avg_rating = db.query(sqlfunc.avg(Review.rating)).filter(Review.store_id == store_id).scalar() or 0
-    rating_score = float(avg_rating) / 5.0
+    rating_score = round(float(avg_rating) / 5.0, 2)
 
-    # Signal 2: Order success rate (30%)
     total_orders = db.query(sqlfunc.count(Order.id)).filter(Order.shop_id == store_id).scalar() or 0
     delivered_orders = db.query(sqlfunc.count(Order.id)).filter(
         Order.shop_id == store_id, Order.status == "delivered"
     ).scalar() or 0
-    order_success = delivered_orders / total_orders if total_orders > 0 else 0.5
+    delivery_score = round(delivered_orders / total_orders, 2) if total_orders > 0 else 0.5
 
-    # Signal 3: Negotiation fairness (20%)
-    from models.core import PriceRequest
     neg_count = db.query(sqlfunc.count(PriceRequest.id)).filter(PriceRequest.shop_id == store_id).scalar() or 0
     avg_delta = db.query(sqlfunc.avg(PriceRequest.negotiation_delta)).filter(
         PriceRequest.shop_id == store_id
     ).scalar() or 0
-    neg_fairness = max(0, 1.0 - abs(float(avg_delta))) if neg_count > 0 else 0.5
+    fairness_score = round(max(0, 1.0 - abs(float(avg_delta))), 2) if neg_count > 0 else 0.5
 
-    # Signal 4: Activity level (10%) — has products
     product_count = db.query(sqlfunc.count(Product.id)).filter(
         Product.shop_id == store_id, Product.is_deleted == False
     ).scalar() or 0
-    activity = min(product_count / 10.0, 1.0)
+    activity_score = round(min(product_count / 10.0, 1.0), 2)
 
-    trust = round(0.4 * rating_score + 0.3 * order_success + 0.2 * neg_fairness + 0.1 * activity, 2)
+    return TrustBreakdown(
+        rating=rating_score,
+        delivery=delivery_score,
+        fairness=fairness_score,
+        activity=activity_score,
+    )
+
+
+def _recompute_trust_score(db: Session, store_id: int):
+    """Recompute trust score for an organization after a new review."""
+    org = db.query(Organization).filter(Organization.id == store_id).first()
+    if not org:
+        return
+
+    bd = _compute_trust_breakdown(db, store_id)
+    trust = round(0.4 * bd.rating + 0.3 * bd.delivery + 0.2 * bd.fairness + 0.1 * bd.activity, 2)
     org.trust_score = trust
     db.commit()
-    logger.info("TRUST_RECOMPUTE: store=%d trust=%.2f", store_id, trust)
+    logger.info("TRUST_RECOMPUTE: store=%d trust=%.2f (r=%.2f d=%.2f f=%.2f a=%.2f)", store_id, trust, bd.rating, bd.delivery, bd.fairness, bd.activity)
