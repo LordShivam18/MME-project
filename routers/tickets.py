@@ -6,11 +6,18 @@ from datetime import datetime, timedelta
 import re
 import time
 import logging
+import threading
 
 logger = logging.getLogger(__name__)
 
-# --- In-memory metrics cache (org-scoped, 60s TTL) ---
+# --- In-memory metrics cache (org-scoped, 60s TTL, thread-safe) ---
 _metrics_cache: dict[int, dict] = {}  # {org_id: {"data": {...}, "expires_at": float}}
+_metrics_lock = threading.Lock()
+
+def _invalidate_metrics_cache(org_id: int):
+    """Remove cached metrics for an org so the next fetch recomputes."""
+    with _metrics_lock:
+        _metrics_cache.pop(org_id, None)
 
 import models.core as models
 from pydantic import BaseModel
@@ -101,13 +108,14 @@ def _check_sla_and_escalation(db: Session, ticket):
 
     # Escalation: unresolved after 3 days
     if ticket.created_at < now - timedelta(days=3):
-        if not ticket.escalated:
+        was_escalated = ticket.escalated  # Guard: capture state BEFORE mutation
+        if not was_escalated:
             ticket.escalated = True
             ticket.priority = "high"
             changed = True
             logger.info(f"Ticket #{ticket.id} escalated after 3 days")
 
-            # --- Escalation Notifications ---
+            # --- Escalation Notifications (only on first escalation) ---
             try:
                 # Notify seller/admin
                 seller_id = ticket.organization.owner_id if hasattr(ticket.organization, 'owner_id') else None
@@ -243,6 +251,7 @@ def create_ticket(payload: TicketCreate, db: Session = Depends(get_db), current_
     db.add(notif)
     db.commit()
     db.refresh(ticket)
+    _invalidate_metrics_cache(ticket.organization_id)
     return _enrich_ticket_response(ticket)
 
 @router.get("/tickets", response_model=List[TicketResponse])
@@ -332,6 +341,7 @@ def add_ticket_message(ticket_id: int, payload: TicketMessageCreate, db: Session
 
     db.commit()
     db.refresh(msg)
+    _invalidate_metrics_cache(ticket.organization_id)
     return msg
 
 @router.patch("/tickets/{ticket_id}/status", response_model=TicketResponse)
@@ -380,6 +390,7 @@ def update_ticket_status(ticket_id: int, payload: TicketStatusUpdate, db: Sessio
         db.add(notif)
         db.commit()
         db.refresh(ticket)
+        _invalidate_metrics_cache(ticket.organization_id)
     return _enrich_ticket_response(ticket)
 
 
@@ -395,11 +406,12 @@ def get_support_metrics(db: Session = Depends(get_db), current_user: dict = Depe
     if business_type == "customer":
         raise HTTPException(status_code=403, detail="Only organization users can view support metrics")
 
-    # --- Cache check (org-scoped, 60s TTL) ---
+    # --- Cache check (org-scoped, 60s TTL, thread-safe) ---
     now = time.time()
-    cached = _metrics_cache.get(org_id)
-    if cached and cached["expires_at"] > now:
-        return cached["data"]
+    with _metrics_lock:
+        cached = _metrics_cache.get(org_id)
+        if cached and cached["expires_at"] > now:
+            return cached["data"]
 
     # --- Compute metrics ---
     base = db.query(models.SupportTicket).filter(models.SupportTicket.organization_id == org_id)
@@ -415,7 +427,8 @@ def get_support_metrics(db: Session = Depends(get_db), current_user: dict = Depe
             "escalation_rate": 0.0,
             "cached": False,
         }
-        _metrics_cache[org_id] = {"data": result, "expires_at": now + 60}
+        with _metrics_lock:
+            _metrics_cache[org_id] = {"data": result, "expires_at": now + 60}
         return result
 
     open_tickets = base.filter(models.SupportTicket.status != "resolved").count()
@@ -453,5 +466,6 @@ def get_support_metrics(db: Session = Depends(get_db), current_user: dict = Depe
     }
 
     # Store in cache with 60s TTL
-    _metrics_cache[org_id] = {"data": result, "expires_at": now + 60}
+    with _metrics_lock:
+        _metrics_cache[org_id] = {"data": result, "expires_at": now + 60}
     return result
