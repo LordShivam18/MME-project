@@ -4,9 +4,13 @@ from sqlalchemy import or_, func
 from typing import List, Optional
 from datetime import datetime, timedelta
 import re
+import time
 import logging
 
 logger = logging.getLogger(__name__)
+
+# --- In-memory metrics cache (org-scoped, 60s TTL) ---
+_metrics_cache: dict[int, dict] = {}  # {org_id: {"data": {...}, "expires_at": float}}
 
 import models.core as models
 from pydantic import BaseModel
@@ -61,7 +65,8 @@ class TicketResponse(BaseModel):
     resolved_at: datetime | None = None
     sla_breached: bool = False
     escalated: bool = False
-    sla_status: str | None = None  # Computed field: "ok" | "breached"
+    sla_status: str | None = None  # Computed: "ok" | "breached"
+    first_response_missed: bool = False  # Computed: no response + SLA breached
     messages: List[TicketMessageResponse] = []
     events: List[TicketEventResponse] = []
     class Config: from_attributes = True
@@ -101,6 +106,29 @@ def _check_sla_and_escalation(db: Session, ticket):
             ticket.priority = "high"
             changed = True
             logger.info(f"Ticket #{ticket.id} escalated after 3 days")
+
+            # --- Escalation Notifications ---
+            try:
+                # Notify seller/admin
+                seller_id = ticket.organization.owner_id if hasattr(ticket.organization, 'owner_id') else None
+                if seller_id:
+                    db.add(models.Notification(
+                        user_id=seller_id,
+                        type="support_escalation",
+                        title=f"Ticket #{ticket.id} Escalated",
+                        message=f"Ticket #{ticket.id} has been escalated due to delay",
+                        priority="high"
+                    ))
+                # Notify buyer
+                db.add(models.Notification(
+                    user_id=ticket.user_id,
+                    type="support_escalation",
+                    title=f"Ticket #{ticket.id} Escalated",
+                    message=f"Ticket #{ticket.id} has been escalated due to delay",
+                    priority="high"
+                ))
+            except Exception as e:
+                logger.warning(f"Failed to send escalation notifications for ticket #{ticket.id}: {e}")
 
     if changed:
         db.flush()
@@ -147,9 +175,9 @@ def auto_close_inactive_tickets(db: Session, ticket=None, tickets=None):
 
 
 def _enrich_ticket_response(ticket) -> dict:
-    """Add computed sla_status field to ticket before returning."""
-    # Pydantic model_validate will handle this; we set the transient attribute
+    """Add computed fields to ticket before returning."""
     ticket.sla_status = "breached" if ticket.sla_breached else "ok"
+    ticket.first_response_missed = (ticket.first_response_at is None and ticket.sla_breached)
     return ticket
 
 
@@ -360,25 +388,35 @@ def update_ticket_status(ticket_id: int, payload: TicketStatusUpdate, db: Sessio
 # ============================================================
 @router.get("/support/metrics")
 def get_support_metrics(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    """Return operational SLA metrics scoped by organization."""
+    """Return operational SLA metrics scoped by organization with 60s in-memory cache."""
     org_id = _org_id(current_user)
     business_type = current_user.get("business_type", "customer")
 
     if business_type == "customer":
         raise HTTPException(status_code=403, detail="Only organization users can view support metrics")
 
+    # --- Cache check (org-scoped, 60s TTL) ---
+    now = time.time()
+    cached = _metrics_cache.get(org_id)
+    if cached and cached["expires_at"] > now:
+        return cached["data"]
+
+    # --- Compute metrics ---
     base = db.query(models.SupportTicket).filter(models.SupportTicket.organization_id == org_id)
     total = base.count()
 
     if total == 0:
-        return {
+        result = {
             "total_tickets": 0,
             "open_tickets": 0,
             "avg_response_time_hours": 0.0,
             "avg_resolution_time_hours": 0.0,
             "sla_breach_rate": 0.0,
             "escalation_rate": 0.0,
+            "cached": False,
         }
+        _metrics_cache[org_id] = {"data": result, "expires_at": now + 60}
+        return result
 
     open_tickets = base.filter(models.SupportTicket.status != "resolved").count()
     breached = base.filter(models.SupportTicket.sla_breached == True).count()
@@ -404,11 +442,16 @@ def get_support_metrics(db: Session = Depends(get_db), current_user: dict = Depe
     else:
         avg_resolution_hours = 0.0
 
-    return {
+    result = {
         "total_tickets": total,
         "open_tickets": open_tickets,
         "avg_response_time_hours": avg_response_hours,
         "avg_resolution_time_hours": avg_resolution_hours,
         "sla_breach_rate": round(breached / total, 4) if total else 0.0,
         "escalation_rate": round(escalated / total, 4) if total else 0.0,
+        "cached": False,
     }
+
+    # Store in cache with 60s TTL
+    _metrics_cache[org_id] = {"data": result, "expires_at": now + 60}
+    return result
