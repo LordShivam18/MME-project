@@ -331,7 +331,7 @@ def list_public_stores(
         base_query = base_query.filter(Organization.name.ilike(f"%{search}%"))
 
     # Only stores with products
-    base_query = base_query.having(sqlfunc.coalesce(product_count_sq.c.product_count, 0) > 0)
+    base_query = base_query.filter(sqlfunc.coalesce(product_count_sq.c.product_count, 0) > 0)
 
     # Count total
     count_query = base_query.subquery()
