@@ -37,7 +37,7 @@ export default function CompleteProfile() {
       });
       // Sync state globally and debug
       const meRes = await axiosClient.get('/api/v1/me');
-      console.log("USER STATE:", meRes.data?.user);
+      console.log("USER FROM /me:", meRes.data?.user);
       // Hard redirect to force App.jsx to pick up new session state
       window.location.href = '/dashboard';
     } catch (err) {

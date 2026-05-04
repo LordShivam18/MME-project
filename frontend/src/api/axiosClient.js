@@ -6,6 +6,8 @@ const axiosClient = axios.create({
   timeout: 10000,
 });
 
+console.log("AXIOS BASE URL:", import.meta.env.VITE_API_URL);
+
 // Track if a refresh is already in-flight to prevent race conditions
 let isRefreshing = false;
 let failedQueue = [];

@@ -328,7 +328,7 @@ def list_public_stores(
         breakdown = _compute_trust_breakdown(db, r.id)
         store_list.append(PublicStoreResponse(
             id=r.id, name=r.name or "",
-            category=r.category, address=r.address, phone=r.phone,
+            category=r.category, address=r.address or "", phone=r.phone or "",
             product_count=r.product_count,
             rating=round(r.avg_rating, 1),
             total_reviews=r.total_reviews,

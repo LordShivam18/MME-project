@@ -39,6 +39,7 @@ function App() {
         // Ping explicit backend Auth route to cryptographically verify token
         // If access_token is expired, the axiosClient interceptor will silently refresh it
         const res = await axiosClient.get('/api/v1/me');
+        console.log("USER FROM /me:", res.data?.user);
         setIsAuthenticated(true);
         setKycComplete(res.data?.user?.kyc_complete ?? true);
       } catch (error) {

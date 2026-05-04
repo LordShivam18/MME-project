@@ -93,7 +93,7 @@ export default function OrderTracking() {
             {currentStatus?.toUpperCase()}
           </span>
         </div>
-        {user?.business_type === 'customer' && timeline?.order_id && (
+        { (user?.business_type === 'customer' || user?.role === 'customer') && timeline?.order_id && (
           <button onClick={() => setShowIssueModal(true)} style={s.issueBtn}>⚠️ Report Issue</button>
         )}
       </div>

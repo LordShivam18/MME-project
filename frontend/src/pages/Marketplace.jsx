@@ -22,6 +22,7 @@ export default function Marketplace() {
       const res = await axiosClient.get(`/api/v1/public/stores${params}`);
       setStores(res.data?.stores || []);
     } catch (err) {
+      console.log(err.response);
       setStores([]);
       setError('Failed to load stores');
     } finally {
