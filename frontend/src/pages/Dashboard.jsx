@@ -38,7 +38,7 @@ export default function Dashboard() {
         {user && (
           <div style={{ marginTop: '2rem', background: '#333', color: '#fff', padding: '2rem', borderRadius: '8px', display: 'inline-block' }}>
             <h3 style={{ borderBottom: '1px solid #555', paddingBottom: '0.5rem', marginBottom: '1rem' }}>Active Session Identity</h3>
-            <div style={{ fontSize: '1.2rem', margin: '0.5rem 0' }}><strong>Role:</strong> {user.role || 'Admin'}</div>
+            <div style={{ fontSize: '1.2rem', margin: '0.5rem 0' }}><strong>Role:</strong> {user.business_type || user.role || 'customer'}</div>
             <div style={{ fontSize: '1.2rem', margin: '0.5rem 0', color: '#0dcaf0' }}><strong>Account ID:</strong> {user.email || user.user_id || 'test@gmail.com'}</div>
           </div>
         )}

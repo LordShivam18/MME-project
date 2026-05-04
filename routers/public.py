@@ -265,6 +265,7 @@ def list_public_stores(
     Public store directory with pagination.
     Returns only organizations where is_public=TRUE and has products.
     """
+    print("PUBLIC STORES API HIT")
     from sqlalchemy import func as sqlfunc
 
     product_count_sq = (
