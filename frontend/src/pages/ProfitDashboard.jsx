@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axiosClient from '../api/axiosClient';
 import { formatCurrency } from '../utils';
+import { useAuth } from '../context/AuthContext';
+import { isCustomer } from '../utils/roles';
 import { LoadingSpinner, ErrorState } from '../components/StateSpinners';
 import {
   Chart as ChartJS, CategoryScale, LinearScale, PointElement,
@@ -17,6 +19,7 @@ const CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes frontend TTL
 
 export default function ProfitDashboard() {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [products, setProducts] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -146,11 +149,17 @@ export default function ProfitDashboard() {
     );
   }
 
+
   // Base Metrics & Contrast
+  const isCust = isCustomer(user);
   const total7DayProfit = products.reduce((acc, p) => acc + (p.profit_per_unit * p.avg_daily_sales * 7), 0);
   const previousPeriodProfit = total7DayProfit * 0.87; // Simulated past baseline
   const growthPercent = ((total7DayProfit - previousPeriodProfit) / previousPeriodProfit * 100).toFixed(1);
   const isPositiveGrowth = growthPercent > 0;
+
+  const totalSavings = total7DayProfit * 0.45; // Simulated savings
+  const avgDiscount = 12.5; // Simulated discount %
+
 
   const topProducts = products.filter(p => p.profit_per_unit >= 5);
   const lowProfitProducts = products.filter(p => p.profit_per_unit < 5);
@@ -199,8 +208,8 @@ export default function ProfitDashboard() {
       <div style={{ padding: '0 1rem' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: '2.5rem' }}>
           <div>
-            <h1 style={{ fontSize: '2rem', fontWeight: '800', color: '#0f172a', margin: '0 0 0.5rem 0' }}>Profit Intelligence</h1>
-            <p style={{ color: '#64748b', margin: 0, fontSize: '1.1rem' }}>Estimated performance insights structured against 7-Day UTC periods.</p>
+            <h1 style={{ fontSize: '2rem', fontWeight: '800', color: '#0f172a', margin: '0 0 0.5rem 0' }}>{isCustomer(user) ? 'Savings Dashboard' : 'Profit Intelligence'}</h1>
+            <p style={{ color: '#64748b', margin: 0, fontSize: '1.1rem' }}>{isCustomer(user) ? 'Your negotiated savings and discounts.' : 'Estimated performance insights structured against 7-Day UTC periods.'}</p>
           </div>
           <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
             <div style={{ background: '#e0e7ff', color: '#4338ca', padding: '0.5rem 1rem', borderRadius: '8px', fontWeight: 'bold' }}>
@@ -235,25 +244,35 @@ export default function ProfitDashboard() {
         {/* SUMMARY CARDS */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '1.5rem', marginBottom: '3rem' }}>
           <div className="glass-card" style={{ padding: '1.5rem' }}>
-            <h3 style={{ color: '#64748b', fontSize: '0.9rem', margin: 0, fontWeight: 600, textTransform: 'uppercase' }}>Est. Volume (7-Day UTC)</h3>
-            <div className="metric-value">{formatCurrency(total7DayProfit)}</div>
+            <h3 style={{ color: '#64748b', fontSize: '0.9rem', margin: 0, fontWeight: 600, textTransform: 'uppercase' }}>{isCust ? 'Total Savings (7-Day)' : 'Est. Volume (7-Day UTC)'}</h3>
+            <div className="metric-value">{formatCurrency(isCust ? totalSavings : total7DayProfit)}</div>
             <div className={`growth-badge ${isPositiveGrowth ? 'positive' : 'negative'}`}>
               {isPositiveGrowth ? '↑' : '↓'} {Math.abs(growthPercent)}% vs prior period
             </div>
           </div>
-          <div className="glass-card" style={{ padding: '1.5rem', background: '#f8fafc', border: '1px solid #d1fae5' }}>
-            <h3 style={{ color: '#065f46', fontSize: '0.9rem', margin: 0, fontWeight: 600, textTransform: 'uppercase' }}>Highest Margin Hero</h3>
-            <div style={{ fontSize: '1.4rem', fontWeight: 800, color: '#047857', margin: '0.5rem 0' }}>{topProduct?.name}</div>
-            <button className="btn-action btn-primary" onClick={() => navigate('/contacts')}>View Suppliers</button>
-          </div>
-          <div className="glass-card" style={{ padding: '1.5rem', background: '#f8fafc', border: '1px solid #fee2e2' }}>
-            <h3 style={{ color: '#991b1b', fontSize: '0.9rem', margin: 0, fontWeight: 600, textTransform: 'uppercase' }}>Lowest Margin Risk</h3>
-            <div style={{ fontSize: '1.4rem', fontWeight: 800, color: '#b91c1c', margin: '0.5rem 0' }}>{lowestProduct?.name}</div>
-            <button className="btn-action btn-warning" onClick={() => navigate('/products')}>Review Price</button>
-          </div>
+          {isCust && (
+             <div className="glass-card" style={{ padding: '1.5rem', background: '#f8fafc', border: '1px solid #d1fae5' }}>
+               <h3 style={{ color: '#065f46', fontSize: '0.9rem', margin: 0, fontWeight: 600, textTransform: 'uppercase' }}>Avg Discount %</h3>
+               <div style={{ fontSize: '2.2rem', fontWeight: 800, color: '#047857', margin: '0.5rem 0' }}>{avgDiscount}%</div>
+             </div>
+          )}
+          {!isCust && (
+            <>
+              <div className="glass-card" style={{ padding: '1.5rem', background: '#f8fafc', border: '1px solid #d1fae5' }}>
+                <h3 style={{ color: '#065f46', fontSize: '0.9rem', margin: 0, fontWeight: 600, textTransform: 'uppercase' }}>Highest Margin Hero</h3>
+                <div style={{ fontSize: '1.4rem', fontWeight: 800, color: '#047857', margin: '0.5rem 0' }}>{topProduct?.name}</div>
+                <button className="btn-action btn-primary" onClick={() => navigate('/contacts')}>View Suppliers</button>
+              </div>
+              <div className="glass-card" style={{ padding: '1.5rem', background: '#f8fafc', border: '1px solid #fee2e2' }}>
+                <h3 style={{ color: '#991b1b', fontSize: '0.9rem', margin: 0, fontWeight: 600, textTransform: 'uppercase' }}>Lowest Margin Risk</h3>
+                <div style={{ fontSize: '1.4rem', fontWeight: 800, color: '#b91c1c', margin: '0.5rem 0' }}>{lowestProduct?.name}</div>
+                <button className="btn-action btn-warning" onClick={() => navigate('/products')}>Review Price</button>
+              </div>
+            </>
+          )}
         </div>
 
-        {/* TOP VS LOW - CONTRAST BLOCK */}
+        {!isCust && (<>{/* TOP VS LOW - CONTRAST BLOCK */}
         <div className="split-row">
           <div className="half-col glass-card" style={{ padding: '1.5rem', borderTop: '4px solid #10b981' }}>
             <h3 style={{ color: '#047857', margin: '0 0 1rem 0' }}>Top Performers</h3>
@@ -300,7 +319,8 @@ export default function ProfitDashboard() {
           </div>
         </div>
 
-        {/* TREND & RECOMMENDED ACTIONS */}
+        </>)}
+        {!isCust && (<>{/* TREND & RECOMMENDED ACTIONS */}
         <div className="split-row">
           <div className="half-col glass-card" style={{ padding: '2rem', flex: '2' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1.5rem' }}>
@@ -325,6 +345,7 @@ export default function ProfitDashboard() {
             </div>
           </div>
         </div>
+        </>)}
 
       </div>
 

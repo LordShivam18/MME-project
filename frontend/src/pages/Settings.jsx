@@ -1,8 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import axiosClient from '../api/axiosClient';
 import { LoadingSpinner, ErrorState } from '../components/StateSpinners';
+import { useAuth } from '../context/AuthContext';
+import { isCustomer } from '../utils/roles';
 
 export default function Settings() {
+  const { user: authUser } = useAuth();
   const [user, setUser] = useState(null);
   const [org, setOrg] = useState(null);
   const [aiMode, setAiMode] = useState("balanced");

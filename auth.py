@@ -117,8 +117,17 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
         "username": user.username,
         "organization_id": user.organization_id, 
         "role": user.role or "admin",
-        "is_platform_admin": user.is_platform_admin
+        "business_type": getattr(user, 'business_type', 'customer'),
+        "is_platform_admin": getattr(user, 'is_platform_admin', False)
     }
+
+def get_optional_current_user(token: Optional[str] = Depends(OAuth2PasswordBearer(tokenUrl="/api/v1/login", auto_error=False)), db: Session = Depends(get_db)):
+    if not token:
+        return None
+    try:
+        return get_current_user(token=token, db=db)
+    except HTTPException:
+        return None
 
 def require_platform_admin(current_user: dict = Depends(get_current_user)):
     """
@@ -129,6 +138,17 @@ def require_platform_admin(current_user: dict = Depends(get_current_user)):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Access denied: Platform administrator privileges required"
+        )
+    return current_user
+
+def require_seller(current_user: dict = Depends(get_current_user)):
+    """
+    Ensures the current user is a seller (retailer, wholesaler, other).
+    """
+    if current_user.get("business_type") == "customer" and not current_user.get("is_platform_admin"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden: Seller privileges required"
         )
     return current_user
 

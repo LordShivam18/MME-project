@@ -1,6 +1,8 @@
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useState, useEffect } from 'react';
 import axiosClient from '../api/axiosClient';
+import { useAuth } from '../context/AuthContext';
+import { isCustomer, isSeller, isAdmin } from '../utils/roles';
 import './Layout.css';
 
 const navItems = [
@@ -39,6 +41,7 @@ const typeIcons = {
 
 export default function Layout({ children }) {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [notifications, setNotifications] = useState([]);
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
 
@@ -93,7 +96,25 @@ export default function Layout({ children }) {
         </div>
 
         <nav className="sidebar-nav">
-          {navItems.map((item, i) => {
+          
+          {navItems.filter(item => {
+            if (!user) return true;
+            if (isCustomer(user)) {
+              const allowed = ['/dashboard', '/marketplace', '/search', '/contacts', '/tickets', '/profit', '/billing', '/settings'];
+              if (item.to && !allowed.includes(item.to)) return false;
+            }
+            if (isSeller(user)) {
+              const allowed = ['/dashboard', '/products', '/inventory', '/contacts', '/seller-dashboard', '/tickets', '/profit', '/chat', '/billing', '/settings', '/marketplace'];
+              if (item.to && !allowed.includes(item.to)) return false;
+            }
+            return true;
+          }).map((item, i) => {
+            let label = item.label;
+            if (isCustomer(user) && item.to === '/contacts') label = 'Orders & Sellers';
+            if (isCustomer(user) && item.to === '/profit') label = 'Savings Dashboard';
+            if (isSeller(user) && item.to === '/contacts') label = 'CRM & Orders';
+            if (isSeller(user) && item.to === '/profit') label = 'Profit Analytics';
+
             if (item.section) {
               return <div key={i} className="sidebar-section-label">{item.section}</div>;
             }
@@ -104,7 +125,7 @@ export default function Layout({ children }) {
                 className={({ isActive }) => `sidebar-link ${isActive ? 'active' : ''}`}
               >
                 <span className="sidebar-link-icon">{item.icon}</span>
-                {item.label}
+                {label}
               </NavLink>
             );
           })}

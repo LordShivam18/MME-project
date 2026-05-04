@@ -6,7 +6,7 @@ from datetime import datetime
 import models.core as models
 import schemas.core as schemas
 from database import get_db
-from auth import get_current_user
+from auth import get_current_user, require_seller
 from routers.endpoints import _org_id, org_filter, require_active_subscription
 from limiter import limiter
 

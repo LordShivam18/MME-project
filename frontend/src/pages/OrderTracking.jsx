@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import axiosClient from '../api/axiosClient';
 import { LoadingSpinner, ErrorState } from '../components/StateSpinners';
+import { useAuth } from '../context/AuthContext';
+import { isCustomer } from '../utils/roles';
 
 const STATUS_STEPS = ['placed', 'confirmed', 'packed', 'shipped', 'delivered'];
 const STATUS_COLORS = {
@@ -17,8 +19,8 @@ const STATUS_COLORS = {
 export default function OrderTracking() {
   const { orderId } = useParams();
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [timeline, setTimeline] = useState(null);
-  const [user, setUser] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
 

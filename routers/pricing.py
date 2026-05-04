@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 
 from database import get_db
 from models import core as models
-from auth import get_current_user
+from auth import get_current_user, require_seller
 from services.pricing_engine import PricingEngine, normalize_price
 from limiter import limiter
 
@@ -244,7 +244,7 @@ def delete_pricing_tier(tier_id: int, db: Session = Depends(get_db), current_use
 # ======================== SMART PRICING ========================
 
 @router.get("/products/{product_id}/pricing", response_model=SmartPriceResponse)
-def get_smart_price(product_id: int, qty: int = 1, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+def get_smart_price(product_id: int, qty: int = 1, db: Session = Depends(get_db), current_user: dict = Depends(require_seller)):
     org_id = _org_id(current_user)
     product = _get_product_safe(db, product_id, org_id)
     if qty < 1:

@@ -2,10 +2,13 @@ import { useState, useEffect } from 'react';
 import { useLocation, useSearchParams } from 'react-router-dom';
 import axiosClient from '../api/axiosClient';
 import { formatCurrency } from '../utils';
+import { useAuth } from '../context/AuthContext';
+import { isCustomer } from '../utils/roles';
 
 export default function Contacts() {
   const location = useLocation();
   const [searchParams] = useSearchParams();
+  const { user } = useAuth();
   const [contacts, setContacts] = useState([]);
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState('all');
@@ -26,8 +29,13 @@ export default function Contacts() {
 
   const fetchContacts = async () => {
     try {
-      const res = await axiosClient.get('/api/v1/contacts');
-      setContacts(res.data);
+      if (isCustomer(user)) {
+        const res = await axiosClient.get('/api/v1/suppliers/nearby');
+        setContacts(res.data);
+      } else {
+        const res = await axiosClient.get('/api/v1/contacts');
+        setContacts(res.data);
+      }
     } catch (e) { console.error(e); }
   };
 
@@ -208,16 +216,20 @@ export default function Contacts() {
         {/* LEFT PANEL: Contacts */}
         <div style={{ borderRight: '1px solid #e5e7eb', paddingRight: '1rem', display: 'flex', flexDirection: 'column', height: '100%' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-            <h2 style={{ margin: 0 }}>Contacts</h2>
-            <button onClick={() => setIsCreatingContact(!isCreatingContact)} style={styles.btnSm}>+ Add</button>
+            <h2 style={{ margin: 0 }}>{isCustomer(user) ? 'Nearby Sellers' : 'Contacts'}</h2>
+            {!isCustomer(user) && <button onClick={() => setIsCreatingContact(!isCreatingContact)} style={styles.btnSm}>+ Add</button>}
           </div>
           
+
           <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.5rem' }}>
-             <select style={{...styles.input, marginBottom: 0, width: '100px'}} value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
-                <option value="all">All</option>
-                <option value="supplier">Suppliers</option>
-                <option value="customer">Customers</option>
-             </select>
+             {!isCustomer(user) && (
+               <select style={{...styles.input, marginBottom: 0, width: '100px'}} value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
+                  <option value="all">All</option>
+                  <option value="supplier">Suppliers</option>
+                  <option value="customer">Customers</option>
+               </select>
+             )}
+
              <input 
                type="text" 
                placeholder="Search..." 

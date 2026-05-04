@@ -23,6 +23,7 @@ from pydantic import BaseModel
 
 from database import get_db
 from models.core import Product, Inventory, Organization, Review
+from auth import get_optional_current_user
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Public"])
@@ -260,6 +261,7 @@ def list_public_stores(
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
+    current_user: Optional[dict] = Depends(get_optional_current_user),
 ):
     """
     Public store directory with pagination.
@@ -306,8 +308,22 @@ def list_public_stores(
         .filter(
             Organization.is_public == True,
             Organization.is_deleted == False,
+            Organization.business_type != 'customer'
         )
     )
+
+    # Role-based sorting
+    viewer_role = current_user.get("business_type") if current_user else "customer"
+    from sqlalchemy import case
+    if viewer_role == "customer":
+        role_sort = case((Organization.business_type == 'retailer', 1), (Organization.business_type == 'wholesaler', 2), else_=3)
+    elif viewer_role == "wholesaler":
+        role_sort = case((Organization.business_type == 'retailer', 1), else_=2)
+    elif viewer_role == "retailer":
+        role_sort = case((Organization.business_type == 'wholesaler', 1), else_=2)
+    else:
+        role_sort = case((Organization.business_type == 'retailer', 1), else_=2)
+
 
     if category:
         base_query = base_query.filter(Organization.category.ilike(f"%{category}%"))
@@ -321,7 +337,7 @@ def list_public_stores(
     count_query = base_query.subquery()
     total_count = db.query(sqlfunc.count()).select_from(count_query).scalar() or 0
 
-    rows = base_query.order_by(Organization.name.asc()).offset(offset).limit(limit).all()
+    rows = base_query.order_by(role_sort.asc(), Organization.name.asc()).offset(offset).limit(limit).all()
 
     store_list = []
     for r in rows:
@@ -341,6 +357,58 @@ def list_public_stores(
         "stores": store_list,
     }
 
+
+# ======================== NEARBY SUPPLIERS (CRM) ========================
+
+@router.get("/suppliers/nearby")
+def get_nearby_suppliers(
+    limit: int = Query(20, ge=1, le=100),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Dedicated endpoint for the CRM to find nearby sellers.
+    Sorted by role priority relative to the viewer.
+    """
+    viewer_role = current_user.get("business_type", "customer")
+    from sqlalchemy import case, func as sqlfunc
+
+    base_query = db.query(
+        Organization.id,
+        Organization.name,
+        Organization.business_type,
+        Organization.address,
+        Organization.phone,
+        Organization.category
+    ).filter(
+        Organization.is_public == True,
+        Organization.is_deleted == False,
+        Organization.business_type != 'customer'
+    )
+
+    if viewer_role == "customer":
+        role_sort = case((Organization.business_type == 'retailer', 1), (Organization.business_type == 'wholesaler', 2), else_=3)
+    elif viewer_role == "wholesaler":
+        role_sort = case((Organization.business_type == 'retailer', 1), else_=2)
+    elif viewer_role == "retailer":
+        role_sort = case((Organization.business_type == 'wholesaler', 1), else_=2)
+    else:
+        role_sort = case((Organization.business_type == 'retailer', 1), else_=2)
+
+    rows = base_query.order_by(role_sort.asc(), Organization.name.asc()).limit(limit).all()
+
+    suppliers = []
+    for r in rows:
+        suppliers.append({
+            "id": r.id,
+            "name": r.name,
+            "type": r.business_type,
+            "address": r.address or "",
+            "phone": r.phone or "",
+            "category": r.category or ""
+        })
+
+    return suppliers
 
 # ======================== PUBLIC PRODUCT SEARCH ========================
 
@@ -397,6 +465,7 @@ def search_products(
         .filter(
             Organization.is_public == True,
             Organization.is_deleted == False,
+            Organization.business_type != 'customer',
             Product.is_deleted == False,
         )
     )
@@ -527,7 +596,7 @@ def search_products(
 # ======================== REVIEWS + TRUST ========================
 
 from pydantic import Field as PydField
-from auth import get_current_user
+from auth import get_current_user, get_optional_current_user
 from models.core import User, Order
 
 

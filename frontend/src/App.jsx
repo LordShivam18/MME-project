@@ -1,5 +1,7 @@
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { useState, useEffect } from 'react';
+import { useAuth } from './context/AuthContext';
+import { isSeller } from './utils/roles';
 import axiosClient from './api/axiosClient';
 
 import Login from './pages/Login';
@@ -23,35 +25,7 @@ import TicketChat from './pages/TicketChat';
 import Layout from './components/Layout';
 
 function App() {
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [isInitializing, setIsInitializing] = useState(true);
-  const [kycComplete, setKycComplete] = useState(true); // default true to avoid flash
-
-  // ACTIVE TOKEN VALIDATION
-  useEffect(() => {
-    const validateSession = async () => {
-      const token = localStorage.getItem('access_token');
-      if (!token) {
-        setIsInitializing(false);
-        return;
-      }
-      try {
-        // Ping explicit backend Auth route to cryptographically verify token
-        // If access_token is expired, the axiosClient interceptor will silently refresh it
-        const res = await axiosClient.get('/api/v1/me');
-        console.log("USER FROM /me:", res.data?.user);
-        setIsAuthenticated(true);
-        setKycComplete(res.data?.user?.kyc_complete ?? true);
-      } catch (error) {
-        // If both access and refresh fail, interceptor already wiped tokens
-        localStorage.clear();
-        setIsAuthenticated(false);
-      } finally {
-        setIsInitializing(false);
-      }
-    };
-    validateSession();
-  }, []);
+  const { user, isAuthenticated, setIsAuthenticated, isInitializing, kycComplete, setKycComplete, fetchUser } = useAuth();
 
   if (isInitializing) {
     return <div className="spinner-container">Loading Security Context...</div>; // UI State
@@ -65,6 +39,14 @@ function App() {
   };
 
   // Layout-wrapped protected route
+  
+  const SellerRoute = ({ children }) => {
+    if (!isAuthenticated) return <Navigate to="/login" replace />;
+    if (!kycComplete) return <Navigate to="/complete-profile" replace />;
+    if (!isSeller(user)) return <Layout><div style={{padding: '2rem'}}><h2>Unauthorized</h2><p>You do not have permission to view this page.</p></div></Layout>;
+    return <Layout>{children}</Layout>;
+  };
+
   const ProtectedWithLayout = ({ children }) => {
     if (!isAuthenticated) return <Navigate to="/login" replace />;
     if (!kycComplete) return <Navigate to="/complete-profile" replace />;
@@ -77,8 +59,8 @@ function App() {
         <Route path="/login" element={<Login onLogin={async () => {
           setIsAuthenticated(true);
           try {
-            const res = await axiosClient.get('/api/v1/me');
-            setKycComplete(res.data?.user?.kyc_complete ?? true);
+            await fetchUser();
+            
           } catch { setKycComplete(true); }
         }} />} />
         
@@ -95,9 +77,9 @@ function App() {
         } />
         
         <Route path="/products" element={
-          <ProtectedWithLayout>
+          <SellerRoute>
             <ProductManager />
-          </ProtectedWithLayout>
+          </SellerRoute>
         } />
         
         <Route path="/contacts" element={
@@ -107,9 +89,9 @@ function App() {
         } />
 
         <Route path="/inventory" element={
-          <ProtectedWithLayout>
+          <SellerRoute>
             <Inventory />
-          </ProtectedWithLayout>
+          </SellerRoute>
         } />
 
         <Route path="/profit" element={
@@ -143,9 +125,9 @@ function App() {
         } />
 
         <Route path="/seller-dashboard" element={
-          <ProtectedWithLayout>
+          <SellerRoute>
             <SellerDashboard />
-          </ProtectedWithLayout>
+          </SellerRoute>
         } />
 
         <Route path="/search" element={

@@ -11,6 +11,7 @@ class Organization(Base):
     stripe_customer_id = Column(String, nullable=True, unique=True, index=True)
     ai_decision_mode = Column(String, default="balanced", nullable=False, server_default="balanced")
     is_public = Column(Boolean, default=False, nullable=False, server_default="false")
+    business_type = Column(String, default="customer", nullable=False, server_default="customer")
     category = Column(String, nullable=True)
     address = Column(String, nullable=True)
     phone = Column(String, nullable=True)

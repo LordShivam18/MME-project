@@ -223,6 +223,17 @@ async def lifespan(app: FastAPI):
             conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS business_type VARCHAR DEFAULT 'customer'"))
             conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS kyc_complete BOOLEAN DEFAULT FALSE"))
             conn.execute(text("ALTER TABLE organizations ADD COLUMN IF NOT EXISTS is_public BOOLEAN DEFAULT FALSE"))
+            conn.execute(text("ALTER TABLE organizations ADD COLUMN IF NOT EXISTS business_type VARCHAR DEFAULT 'customer'"))
+            # Backfill business_type from users for existing orgs
+            conn.execute(text("""
+                UPDATE organizations 
+                SET business_type = (
+                    SELECT business_type FROM users WHERE users.organization_id = organizations.id LIMIT 1
+                ) 
+                WHERE business_type = 'customer' AND EXISTS (
+                    SELECT 1 FROM users WHERE users.organization_id = organizations.id AND users.business_type != 'customer'
+                )
+            """))
             conn.execute(text("ALTER TABLE organizations ADD COLUMN IF NOT EXISTS category VARCHAR"))
             conn.execute(text("ALTER TABLE organizations ADD COLUMN IF NOT EXISTS address VARCHAR"))
             conn.execute(text("ALTER TABLE organizations ADD COLUMN IF NOT EXISTS phone VARCHAR"))

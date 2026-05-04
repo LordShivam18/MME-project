@@ -539,11 +539,13 @@ def complete_profile(payload: CompleteProfilePayload, db: Session = Depends(get_
             )
             db.add(kyc)
 
-        # Update user
+        # Update user and org
         user.business_type = btype
         user.kyc_complete = True
         user.full_name = payload.full_name
         user.updated_at = datetime.utcnow()
+        if user.organization:
+            user.organization.business_type = btype
 
         db.commit()
         db.refresh(user)

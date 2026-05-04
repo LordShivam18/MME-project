@@ -15,7 +15,7 @@ from schemas import core as schemas
 from services.prediction_service import get_product_prediction, invalidate_prediction_cache
 from routers.public import on_inventory_change
 from limiter import limiter
-from auth import get_current_user, pwd_context, create_access_token, create_refresh_token, decode_token, require_platform_admin
+from auth import get_current_user, require_seller, pwd_context, create_access_token, create_refresh_token, decode_token, require_platform_admin
 from fastapi.security import OAuth2PasswordRequestForm
 
 logger = logging.getLogger(__name__)
@@ -426,7 +426,7 @@ def invite_user(request: Request, background_tasks: BackgroundTasks, body: Invit
 # ============================================================
 @router.post("/products/", response_model=schemas.ProductResponse)
 @limiter.limit("100/minute")
-def create_product(request: Request, background_tasks: BackgroundTasks, product: schemas.ProductCreate, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+def create_product(request: Request, background_tasks: BackgroundTasks, product: schemas.ProductCreate, db: Session = Depends(get_db), current_user: dict = Depends(require_seller)):
     org_id = _org_id(current_user)
     
     # 🔴 SaaS: Check Subscription Status
@@ -469,7 +469,7 @@ def create_product(request: Request, background_tasks: BackgroundTasks, product:
 
 @router.get("/products/", response_model=List[schemas.ProductResponse])
 @limiter.limit("100/minute")
-def read_products(request: Request, skip: int = 0, limit: int = 100, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+def read_products(request: Request, skip: int = 0, limit: int = 100, db: Session = Depends(get_db), current_user: dict = Depends(require_seller)):
     products = org_filter(db.query(models.Product), models.Product, current_user).offset(skip).limit(limit).all()
     return products
 
@@ -478,7 +478,7 @@ def read_products(request: Request, skip: int = 0, limit: int = 100, db: Session
 # SALES
 # ============================================================
 @router.post("/sales/")
-def record_sale(payload: schemas.SalesCreate, background_tasks: BackgroundTasks, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+def record_sale(payload: schemas.SalesCreate, background_tasks: BackgroundTasks, db: Session = Depends(get_db), current_user: dict = Depends(require_seller)):
     try:
         org_id = _org_id(current_user)
 
@@ -561,7 +561,7 @@ def record_sale(payload: schemas.SalesCreate, background_tasks: BackgroundTasks,
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/sales/history/{product_id}")
-def get_sales_history(product_id: int, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+def get_sales_history(product_id: int, db: Session = Depends(get_db), current_user: dict = Depends(require_seller)):
     cutoff = datetime.utcnow() - timedelta(days=7)
     
     sales = org_filter(
@@ -585,7 +585,7 @@ def get_sales_history(product_id: int, db: Session = Depends(get_db), current_us
 # INVENTORY
 # ============================================================
 @router.post("/inventory/add-stock")
-def add_stock(payload: schemas.AddStockRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+def add_stock(payload: schemas.AddStockRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db), current_user: dict = Depends(require_seller)):
     org_id = _org_id(current_user)
     
     # 🔴 SaaS: Subscription gate
@@ -632,7 +632,7 @@ def add_stock(payload: schemas.AddStockRequest, background_tasks: BackgroundTask
 
 @router.get("/inventory/summary", response_model=List[schemas.InventorySummaryResponse])
 @limiter.limit("50/minute")
-def get_inventory_summary(request: Request, limit: int = 100, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+def get_inventory_summary(request: Request, limit: int = 100, db: Session = Depends(get_db), current_user: dict = Depends(require_seller)):
     org_id = _org_id(current_user)
     # Join excludes soft-deleted products
     joined_data = db.query(models.Product, models.Inventory).join(
@@ -658,7 +658,7 @@ def get_inventory_summary(request: Request, limit: int = 100, db: Session = Depe
 
 @router.get("/inventory/{product_id}", response_model=schemas.InventoryResponse)
 @limiter.limit("100/minute")
-def get_inventory(request: Request, product_id: int, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+def get_inventory(request: Request, product_id: int, db: Session = Depends(get_db), current_user: dict = Depends(require_seller)):
     inventory = org_filter(
         db.query(models.Inventory).filter(models.Inventory.product_id == product_id),
         models.Inventory,
@@ -673,7 +673,7 @@ def get_inventory(request: Request, product_id: int, db: Session = Depends(get_d
 # PRODUCT UPDATE & DELETE
 # ============================================================
 @router.put("/products/{product_id}")
-def update_product(product_id: int, updated: schemas.ProductCreate, background_tasks: BackgroundTasks, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+def update_product(product_id: int, updated: schemas.ProductCreate, background_tasks: BackgroundTasks, db: Session = Depends(get_db), current_user: dict = Depends(require_seller)):
     org_id = _org_id(current_user)
     
     # 🔴 SaaS: Subscription gate
@@ -707,7 +707,7 @@ def update_product(product_id: int, updated: schemas.ProductCreate, background_t
         raise HTTPException(status_code=400, detail="Product with this SKU already exists")
 
 @router.delete("/products/{product_id}")
-def delete_product(product_id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+def delete_product(product_id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db), current_user: dict = Depends(require_seller)):
     # RBAC: Only admins can delete products
     require_role(current_user, ["admin"])
     org_id = _org_id(current_user)
@@ -743,7 +743,7 @@ def delete_product(product_id: int, background_tasks: BackgroundTasks, db: Sessi
 # ============================================================
 @router.get("/predictions/{product_id}")
 @limiter.limit("20/minute")
-def get_prediction_insights(request: Request, product_id: int, window_size_days: int = 14, debug: bool = False, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+def get_prediction_insights(request: Request, product_id: int, window_size_days: int = 14, debug: bool = False, db: Session = Depends(get_db), current_user: dict = Depends(require_seller)):
     org_id = _org_id(current_user)
     
     if debug and current_user.get("role") != "admin":
@@ -774,7 +774,7 @@ def get_prediction_insights(request: Request, product_id: int, window_size_days:
         }
 
 @router.get("/ai/performance", response_model=schemas.AIPerformanceResponse)
-def get_ai_performance(request: Request, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+def get_ai_performance(request: Request, db: Session = Depends(get_db), current_user: dict = Depends(require_seller)):
     org_id = _org_id(current_user)
     
     adjustments = db.query(models.OrderAdjustment).filter(
@@ -841,7 +841,7 @@ def update_ai_decision_mode(request: Request, payload: schemas.OrganizationModeU
 # ============================================================
 @router.patch("/organization/visibility")
 @limiter.limit("10/minute")
-def update_store_visibility(request: Request, body: dict, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+def update_store_visibility(request: Request, body: dict, db: Session = Depends(get_db), current_user: dict = Depends(require_seller)):
     """Toggle organization public visibility for marketplace."""
     require_role(current_user, ["admin"])
     org_id = _org_id(current_user)
@@ -1401,7 +1401,7 @@ def mark_all_notifications_read(db: Session = Depends(get_db), current_user: dic
 # ANALYTICS SUMMARY
 # ============================================================
 @router.get("/analytics/summary")
-def analytics_summary(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+def analytics_summary(db: Session = Depends(get_db), current_user: dict = Depends(require_seller)):
     """Lightweight analytics for business users. Scoped to user's org."""
     org_id = _org_id(current_user)
     user_id = current_user.get("user_id")
