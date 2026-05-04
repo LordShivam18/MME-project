@@ -23,8 +23,7 @@ const processQueue = (error, token = null) => {
 
 // Force logout: wipe both tokens and redirect
 const forceLogout = () => {
-  localStorage.removeItem('access_token');
-  localStorage.removeItem('refresh_token');
+  localStorage.clear();
   window.location.href = '/login';
 };
 

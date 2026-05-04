@@ -43,8 +43,7 @@ function App() {
         setKycComplete(res.data?.user?.kyc_complete ?? true);
       } catch (error) {
         // If both access and refresh fail, interceptor already wiped tokens
-        localStorage.removeItem('access_token');
-        localStorage.removeItem('refresh_token');
+        localStorage.clear();
         setIsAuthenticated(false);
       } finally {
         setIsInitializing(false);

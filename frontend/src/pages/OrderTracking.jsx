@@ -18,6 +18,7 @@ export default function OrderTracking() {
   const { orderId } = useParams();
   const navigate = useNavigate();
   const [timeline, setTimeline] = useState(null);
+  const [user, setUser] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -28,8 +29,13 @@ export default function OrderTracking() {
   const fetchTimeline = async () => {
     setIsLoading(true);
     try {
-      const res = await axiosClient.get(`/api/v1/orders/${orderId}/timeline`);
-      setTimeline(res.data);
+      const [timelineRes, meRes] = await Promise.all([
+        axiosClient.get(`/api/v1/orders/${orderId}/timeline`),
+        axiosClient.get('/api/v1/me')
+      ]);
+      setTimeline(timelineRes.data);
+      setUser(meRes.data?.user || null);
+      console.log("ORDER:", timelineRes.data);
     } catch (err) {
       setError(err.response?.data?.detail || 'Failed to load order tracking');
     } finally {
@@ -87,7 +93,9 @@ export default function OrderTracking() {
             {currentStatus?.toUpperCase()}
           </span>
         </div>
-        <button onClick={() => setShowIssueModal(true)} style={s.issueBtn}>⚠️ Report Issue</button>
+        {user?.business_type === 'customer' && timeline?.order_id && (
+          <button onClick={() => setShowIssueModal(true)} style={s.issueBtn}>⚠️ Report Issue</button>
+        )}
       </div>
 
       {showIssueModal && (

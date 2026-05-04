@@ -35,7 +35,11 @@ export default function CompleteProfile() {
         phone: formData.phone || undefined,
         address: formData.address || undefined,
       });
-      navigate('/dashboard');
+      // Sync state globally and debug
+      const meRes = await axiosClient.get('/api/v1/me');
+      console.log("USER STATE:", meRes.data?.user);
+      // Hard redirect to force App.jsx to pick up new session state
+      window.location.href = '/dashboard';
     } catch (err) {
       setError(err.response?.data?.detail || 'Failed to save profile');
     } finally {

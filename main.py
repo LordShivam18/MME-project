@@ -291,12 +291,14 @@ async def lifespan(app: FastAPI):
         # Ensure default organization exists
         default_org = db.query(Organization).filter(Organization.name == "Default Organization").first()
         if not default_org:
-            default_org = Organization(name="Default Organization")
+            default_org = Organization(name="Default Organization", is_public=False)
             db.add(default_org)
             db.commit()
             db.refresh(default_org)
             logger.info("✅ Default organization created: id=%s", default_org.id)
         else:
+            default_org.is_public = False
+            db.commit()
             logger.info("⚠️ Default organization already exists: id=%s", default_org.id)
 
         # 🔴 SaaS: Ensure default subscription exists for the default org
