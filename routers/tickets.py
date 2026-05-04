@@ -1,9 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
-from sqlalchemy import or_
-from typing import List
+from sqlalchemy import or_, func
+from typing import List, Optional
 from datetime import datetime, timedelta
 import re
+import logging
+
+logger = logging.getLogger(__name__)
 
 import models.core as models
 from pydantic import BaseModel
@@ -18,7 +21,8 @@ router = APIRouter()
 class TicketCreate(BaseModel):
     order_id: int
     issue_type: str
-    priority: str = "medium"
+    priority: Optional[str] = None  # Auto-assigned if not provided
+    sub_reason: Optional[str] = None
 
 class TicketMessageCreate(BaseModel):
     message: str
@@ -48,50 +52,106 @@ class TicketResponse(BaseModel):
     order_id: int
     organization_id: int
     issue_type: str
+    sub_reason: str | None = None
     status: str
     priority: str
     created_at: datetime
     closed_at: datetime | None
     first_response_at: datetime | None = None
     resolved_at: datetime | None = None
+    sla_breached: bool = False
+    escalated: bool = False
+    sla_status: str | None = None  # Computed field: "ok" | "breached"
     messages: List[TicketMessageResponse] = []
     events: List[TicketEventResponse] = []
     class Config: from_attributes = True
 
 
+# --- Priority Auto-Assignment ---
+PRIORITY_MAP = {
+    "refund": "high",
+    "damaged": "medium",
+    "wrong_item": "medium",
+    "delayed": "low",
+    "other": "low",
+}
+
+def _auto_priority(issue_type: str) -> str:
+    return PRIORITY_MAP.get(issue_type, "low")
+
+
 # --- Helpers ---
+def _check_sla_and_escalation(db: Session, ticket):
+    """Evaluate SLA breach (24h) and escalation (3 days) for a single ticket."""
+    if ticket.status == "resolved":
+        return
+    now = datetime.utcnow()
+    changed = False
+
+    # SLA Breach: no seller response within 24h
+    if not ticket.first_response_at and ticket.created_at < now - timedelta(hours=24):
+        if not ticket.sla_breached:
+            ticket.sla_breached = True
+            changed = True
+
+    # Escalation: unresolved after 3 days
+    if ticket.created_at < now - timedelta(days=3):
+        if not ticket.escalated:
+            ticket.escalated = True
+            ticket.priority = "high"
+            changed = True
+            logger.info(f"Ticket #{ticket.id} escalated after 3 days")
+
+    if changed:
+        db.flush()
+
+
 def auto_close_inactive_tickets(db: Session, ticket=None, tickets=None):
-    """Option A implementation: auto-close tickets inactive for 7 days during fetch"""
+    """Option A implementation: auto-close tickets inactive for 7 days during fetch.
+    Also evaluates SLA breach and escalation on every active ticket."""
     target_tickets = []
     if ticket: target_tickets.append(ticket)
     if tickets: target_tickets.extend(tickets)
     
     threshold = datetime.utcnow() - timedelta(days=7)
-    closed_any = False
+    changed = False
     
     for t in target_tickets:
-        if t.status == "resolved": continue
+        if t.status == "resolved":
+            continue
+
+        # Evaluate SLA & escalation first
+        _check_sla_and_escalation(db, t)
         
         # Determine last activity
         last_msg = max(t.messages, key=lambda m: m.created_at, default=None)
         last_activity = last_msg.created_at if last_msg else t.created_at
         
         if last_activity < threshold:
+            old_status = t.status
             t.status = "resolved"
             t.closed_at = datetime.utcnow()
             t.resolved_at = datetime.utcnow()
             
             event = models.TicketEvent(
                 ticket_id=t.id,
-                old_status=t.status,
+                old_status=old_status,
                 new_status="resolved",
-                changed_by=t.organization.owner_id if hasattr(t.organization, 'owner_id') else 1 # System auto-close essentially
+                changed_by=0  # System auto-close
             )
             db.add(event)
-            closed_any = True
+            changed = True
             
-    if closed_any:
+    if changed:
         db.commit()
+
+
+def _enrich_ticket_response(ticket) -> dict:
+    """Add computed sla_status field to ticket before returning."""
+    # Pydantic model_validate will handle this; we set the transient attribute
+    ticket.sla_status = "breached" if ticket.sla_breached else "ok"
+    return ticket
+
 
 # --- Endpoints ---
 
@@ -120,13 +180,17 @@ def create_ticket(payload: TicketCreate, db: Session = Depends(get_db), current_
     if existing:
         raise HTTPException(status_code=400, detail="An active ticket already exists for this order")
 
+    # Priority auto-assignment
+    effective_priority = payload.priority if payload.priority else _auto_priority(payload.issue_type)
+
     ticket = models.SupportTicket(
         user_id=user_id,
         order_id=order.id,
         organization_id=order.organization_id,
         issue_type=payload.issue_type,
+        sub_reason=payload.sub_reason,
         status="open",
-        priority=payload.priority
+        priority=effective_priority
     )
     db.add(ticket)
     db.flush()
@@ -142,16 +206,16 @@ def create_ticket(payload: TicketCreate, db: Session = Depends(get_db), current_
 
     # Notify seller
     notif = models.Notification(
-        user_id=order.organization.owner_id if hasattr(order.organization, 'owner_id') else 1, # fallback if owner_id missing
+        user_id=order.organization.owner_id if hasattr(order.organization, 'owner_id') else 1,
         type="ticket_created",
         title="New Support Ticket",
         message=f"Ticket #{ticket.id} opened for Order #{order.id} ({payload.issue_type})",
-        priority=payload.priority
+        priority=effective_priority
     )
     db.add(notif)
     db.commit()
     db.refresh(ticket)
-    return ticket
+    return _enrich_ticket_response(ticket)
 
 @router.get("/tickets", response_model=List[TicketResponse])
 def get_tickets(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
@@ -167,7 +231,7 @@ def get_tickets(db: Session = Depends(get_db), current_user: dict = Depends(get_
         tickets = db.query(models.SupportTicket).filter(models.SupportTicket.organization_id == org_id).order_by(models.SupportTicket.created_at.desc()).all()
     
     auto_close_inactive_tickets(db, tickets=tickets)
-    return tickets
+    return [_enrich_ticket_response(t) for t in tickets]
 
 @router.get("/tickets/{ticket_id}", response_model=TicketResponse)
 def get_ticket(ticket_id: int, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
@@ -183,7 +247,7 @@ def get_ticket(ticket_id: int, db: Session = Depends(get_db), current_user: dict
         raise HTTPException(status_code=404, detail="Ticket not found")
     
     auto_close_inactive_tickets(db, ticket=ticket)
-    return ticket
+    return _enrich_ticket_response(ticket)
 
 @router.post("/tickets/{ticket_id}/message", response_model=TicketMessageResponse)
 def add_ticket_message(ticket_id: int, payload: TicketMessageCreate, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
@@ -288,4 +352,63 @@ def update_ticket_status(ticket_id: int, payload: TicketStatusUpdate, db: Sessio
         db.add(notif)
         db.commit()
         db.refresh(ticket)
-    return ticket
+    return _enrich_ticket_response(ticket)
+
+
+# ============================================================
+# SUPPORT ANALYTICS ENDPOINT
+# ============================================================
+@router.get("/support/metrics")
+def get_support_metrics(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    """Return operational SLA metrics scoped by organization."""
+    org_id = _org_id(current_user)
+    business_type = current_user.get("business_type", "customer")
+
+    if business_type == "customer":
+        raise HTTPException(status_code=403, detail="Only organization users can view support metrics")
+
+    base = db.query(models.SupportTicket).filter(models.SupportTicket.organization_id == org_id)
+    total = base.count()
+
+    if total == 0:
+        return {
+            "total_tickets": 0,
+            "open_tickets": 0,
+            "avg_response_time_hours": 0.0,
+            "avg_resolution_time_hours": 0.0,
+            "sla_breach_rate": 0.0,
+            "escalation_rate": 0.0,
+        }
+
+    open_tickets = base.filter(models.SupportTicket.status != "resolved").count()
+    breached = base.filter(models.SupportTicket.sla_breached == True).count()
+    escalated = base.filter(models.SupportTicket.escalated == True).count()
+
+    # Avg first response time (only tickets that have been responded to)
+    responded = base.filter(models.SupportTicket.first_response_at.isnot(None)).all()
+    if responded:
+        avg_response_seconds = sum(
+            (t.first_response_at - t.created_at).total_seconds() for t in responded
+        ) / len(responded)
+        avg_response_hours = round(avg_response_seconds / 3600, 2)
+    else:
+        avg_response_hours = 0.0
+
+    # Avg resolution time (only resolved tickets)
+    resolved = base.filter(models.SupportTicket.resolved_at.isnot(None)).all()
+    if resolved:
+        avg_resolution_seconds = sum(
+            (t.resolved_at - t.created_at).total_seconds() for t in resolved
+        ) / len(resolved)
+        avg_resolution_hours = round(avg_resolution_seconds / 3600, 2)
+    else:
+        avg_resolution_hours = 0.0
+
+    return {
+        "total_tickets": total,
+        "open_tickets": open_tickets,
+        "avg_response_time_hours": avg_response_hours,
+        "avg_resolution_time_hours": avg_resolution_hours,
+        "sla_breach_rate": round(breached / total, 4) if total else 0.0,
+        "escalation_rate": round(escalated / total, 4) if total else 0.0,
+    }

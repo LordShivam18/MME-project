@@ -475,12 +475,15 @@ class SupportTicket(Base):
     order_id = Column(Integer, ForeignKey("orders.id"), index=True, nullable=False)
     organization_id = Column(Integer, ForeignKey("organizations.id"), index=True, nullable=False) # For seller isolation
     issue_type = Column(String, nullable=False) # refund/damaged/wrong_item/other
+    sub_reason = Column(String, nullable=True) # Sub-categorization for analytics
     status = Column(String, default="open", nullable=False) # open/in_progress/resolved
     priority = Column(String, default="medium", nullable=False) # low/medium/high
     created_at = Column(DateTime, default=datetime.utcnow)
     closed_at = Column(DateTime, nullable=True)
     first_response_at = Column(DateTime, nullable=True)
     resolved_at = Column(DateTime, nullable=True)
+    sla_breached = Column(Boolean, default=False, nullable=False, server_default="false")
+    escalated = Column(Boolean, default=False, nullable=False, server_default="false")
 
     # Relationships
     order = relationship("Order")

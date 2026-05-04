@@ -275,6 +275,10 @@ async def lifespan(app: FastAPI):
             conn.execute(text("ALTER TABLE support_tickets ADD COLUMN IF NOT EXISTS first_response_at TIMESTAMP"))
             conn.execute(text("ALTER TABLE support_tickets ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMP"))
             conn.execute(text("ALTER TABLE ticket_messages ADD COLUMN IF NOT EXISTS attachment_url VARCHAR"))
+            # --- Enterprise Hardening ---
+            conn.execute(text("ALTER TABLE support_tickets ADD COLUMN IF NOT EXISTS sub_reason TEXT"))
+            conn.execute(text("ALTER TABLE support_tickets ADD COLUMN IF NOT EXISTS sla_breached BOOLEAN DEFAULT FALSE"))
+            conn.execute(text("ALTER TABLE support_tickets ADD COLUMN IF NOT EXISTS escalated BOOLEAN DEFAULT FALSE"))
             conn.commit()
         logger.info("Migration check complete: all columns, indexes, and tables ensured")
     except Exception as e:
