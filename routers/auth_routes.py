@@ -546,6 +546,7 @@ def complete_profile(payload: CompleteProfilePayload, db: Session = Depends(get_
         user.updated_at = datetime.utcnow()
 
         db.commit()
+        db.refresh(user)
         logger.info("PROFILE_COMPLETE: user=%d business_type=%s", user_id, btype)
 
         return {
