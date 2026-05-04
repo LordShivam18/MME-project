@@ -132,8 +132,10 @@ class PredictionResponse(BaseModel):
     generated_at: Optional[datetime] = None
     model_version: str = "1.0.0"
 
-    class Config:
-        from_attributes = True
+    model_config = {
+        "protected_namespaces": (),
+        "from_attributes": True
+    }
 
 class AIPerformanceResponse(BaseModel):
     last_30_days: Dict[str, float]

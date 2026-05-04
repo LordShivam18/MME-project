@@ -23,7 +23,7 @@ from pydantic import BaseModel
 
 from database import get_db
 from models.core import Product, Inventory, Organization, Review
-from auth import get_optional_current_user
+from auth import get_optional_current_user, get_current_user
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Public"])
@@ -364,13 +364,13 @@ def list_public_stores(
 def get_nearby_suppliers(
     limit: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
+    current_user: Optional[dict] = Depends(get_optional_current_user),
 ):
     """
     Dedicated endpoint for the CRM to find nearby sellers.
     Sorted by role priority relative to the viewer.
     """
-    viewer_role = current_user.get("business_type", "customer")
+    viewer_role = current_user.get("business_type", "customer") if current_user else "customer"
     from sqlalchemy import case, func as sqlfunc
 
     base_query = db.query(
@@ -596,7 +596,6 @@ def search_products(
 # ======================== REVIEWS + TRUST ========================
 
 from pydantic import Field as PydField
-from auth import get_current_user, get_optional_current_user
 from models.core import User, Order
 
 
