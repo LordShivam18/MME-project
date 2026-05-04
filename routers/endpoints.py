@@ -360,6 +360,7 @@ def validate_token(request: Request, db: Session = Depends(get_db), current_user
         user_data["business_type"] = db_user.business_type or "customer"
         user_data["kyc_complete"] = db_user.kyc_complete or False
         user_data["full_name"] = db_user.full_name
+        print("ME RESPONSE:", db_user.business_type)
     
     return {
         "status": "ok", 

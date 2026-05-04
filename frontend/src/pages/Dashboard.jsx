@@ -12,7 +12,9 @@ export default function Dashboard() {
     const fetchMe = async () => {
       try {
         const res = await axiosClient.get('/api/v1/me');
-        setUser(res.data?.user || null);
+        const userData = res.data?.user || null;
+        console.log("USER:", userData);
+        setUser(userData);
       } catch (err) {
         console.error(err);
         setUser(null);
